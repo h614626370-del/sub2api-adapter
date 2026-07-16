@@ -25,7 +25,7 @@
 - 前端：Vue 3 + TypeScript + Vite，主页面为 `src/App.vue`，样式为 `src/styles.css`。
 - 图标：`lucide-vue-next`。
 - 数据库：SQLite，驱动为 `modernc.org/sqlite`。
-- 容器：多阶段 Dockerfile，Node 构建前端，Go 构建静态服务，Alpine 运行。
+- 容器：多阶段 Dockerfile，Node 构建前端，`golang:1.26.5-alpine` 构建静态服务，Alpine 运行。
 - 管理后台静态产物：`internal/adapter/web/dist`，由 `npm run build` 生成并嵌入 Go 二进制。
 
 主要文件：
@@ -89,7 +89,7 @@
 ## 4. 重要默认值
 
 - 管理后台使用用户名密码登录，不使用后台 token。独立安装脚本默认使用用户名 `admin` 并生成随机强密码，保存在权限为 `600` 的部署 `.env` 中。
-- Adapter 监听：`127.0.0.1:18080`；虚拟机为了局域网访问使用 `.env` 覆盖为 `0.0.0.0:18080`。
+- Docker 部署时 Adapter 容器内部固定监听 `0.0.0.0:18080`；宿主机管理端口默认只发布到 `127.0.0.1:18080`，由 `ADAPTER_HOST_BIND` 控制。
 - 数据库：`/app/data/adapter.db`。
 - 综合结果字段：`illicit`。
 - 未命中抽样率：`0.3`。
@@ -100,6 +100,7 @@
 - 图片模型：`qwen3-vl-flash`。
 - 联网搜索：文本和图片模型均默认关闭。
 - 决策缓存：默认开启。
+- 内存决策缓存最多 10000 条；SQLite 决策缓存同样按 10000 条清理，后台维护循环每分钟清理过期缓存和超量事件。
 - 事件最多保留 1000 条，默认保留 30 天。
 
 密钥和盐值不要写进本文档、代码、Compose 或提交记录。运行密钥优先在后台配置；环境变量只用于自动化覆盖。
@@ -185,6 +186,15 @@ pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.7
 - `614626370/sub2api-adapter:<version>`
 - `614626370/sub2api-adapter:latest`
 
+当前正式发布（2026-07-17）：
+
+- 版本：`0.0.7`
+- Git 提交：`199e779e8129`
+- Docker Hub 摘要：`sha256:cc8441ed94cdc330033f76ea02ef3a4f71b7a380b0fa9df206e8d9cd73eab58e`
+- `0.0.7` 与 `latest` 指向同一摘要。
+- GitHub Release：`https://github.com/h614626370-del/sub2api-adapter/releases/tag/v0.0.7`
+- 发布前已通过 `go test`、`go vet`、Linux race、staticcheck、govulncheck、前端构建、npm audit、ShellCheck、仓库秘密扫描和最终镜像 Trivy 扫描；Adapter 运行层与 Go 二进制当次高危/严重漏洞均为 0。
+
 当前 Windows 主机没有直接可用的 `docker` 命令时，使用 Ubuntu WSL 中的 Docker。WSL 已登录正确的 Docker Hub 账号，且已有 `614626370/kkflow-guide-api` 发布记录。虚拟机中的 Docker 登录不是该发布账号，不要从虚拟机执行 push，也不要读取或复制 Docker 凭据。
 
 若 WSL 构建因拉取基础镜像网络失败，可将虚拟机已经构建好的当前镜像临时 `docker save | gzip`，传到本机临时目录后在 WSL `docker load` 并 push。成功后必须删除两端临时 tar。
@@ -192,6 +202,13 @@ pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.7
 ## 8. 正式 Docker Compose 部署
 
 正式部署使用 `deploy/docker-compose.yml`，不使用旧的 load-and-run 脚本，也不使用旧的本地 build Compose。
+
+当前线上状态（用户于 2026-07-17 确认）：
+
+- 用户已在正式服务器执行最新版 `scripts/install.sh`，脚本成功启动服务并输出随机管理员账号密码。
+- 本线程没有直接登录正式服务器，线上容器版本、网络名和健康状态仍以服务器实际检查结果为准，不能写成已独立验证。
+- 账号密码、`ADAPTER_UPDATE_TOKEN`、模型 Key、服务器地址和部署目录不得写入公开 `AGENTS.md`；管理员密码只保存在服务器部署目录权限为 `600` 的 `.env` 中。
+- 线上 sub2api Compose 使用 `container_name: sub2api`、自定义 bridge 业务网络，以及本地目录形式的 sub2api/PostgreSQL/Redis 数据挂载。
 
 推荐的一键部署方式（服务器需已安装 Docker Engine 和 Compose）：
 
@@ -202,6 +219,15 @@ bash install-sub2api-adapter.sh
 ```
 
 该脚本完全独立，服务器不需要下载源码或上传项目目录。应先启动名为 `sub2api` 的容器；脚本会自动检测其业务网络，也可通过 `--network` 显式指定。它会自行生成 `.env` 和 `docker-compose.yml`，默认安装到执行时的当前目录、把管理端口发布到宿主机 `127.0.0.1:18080`、自动生成并持久化 `ADAPTER_UPDATE_TOKEN`，然后执行 `docker compose pull` 和 `docker compose up -d`。应先进入专用目录再执行；重复执行会保留原更新令牌、管理员密码、业务网络名称和数据卷。
+
+业务网络识别优先级：
+
+1. 优先使用命令行 `--network NAME`。
+2. 未显式指定时复用部署 `.env` 中的 `SUB2API_DOCKER_NETWORK`。
+3. 仍为空时通过 `docker inspect sub2api` 读取容器当前连接的网络。
+4. 多个网络中若只有一个名称包含 `sub2api-network`，选择该网络；如果总共只有一个网络，直接选择它。
+5. 无法唯一判断时必须报错退出并要求 `--network`，不得猜测网络。
+6. 最终使用 `docker network inspect` 验证网络真实存在，再写入 `.env`。
 
 常用参数：
 
@@ -227,7 +253,8 @@ docker compose -f deploy/docker-compose.yml up -d
 Compose 包含两个服务：
 
 - `moderation-adapter`：`614626370/sub2api-adapter:latest`，同时加入外部 sub2api 业务网络和项目内部控制网络；宿主机管理端口默认仅发布到 `127.0.0.1:18080`。
-- `adapter-updater`：使用按摘要固定的 `nickfedor/watchtower` 维护分支镜像，只加入内部控制网络，不发布宿主机端口。变更摘要前必须重新做镜像漏洞扫描和更新 API 回归。
+- `adapter-updater`：使用公共镜像 `nickfedor/watchtower:nightly@sha256:011cbd0246d247f8827a2624dd6202d8b0d1a3d8b9c9fc7937b427e37aa5f2c9`，按摘要固定到已验证构建；只加入内部控制网络，不发布宿主机端口。变更摘要前必须重新做镜像漏洞扫描和更新 API 回归。
+- 2026-07-16 的 Trivy 结果：旧 `containrrr/watchtower:1.7.1` 有 37 个高危和 5 个严重漏洞，`nickfedor/watchtower:1.19.0` 仍有 1 个高危；当前固定摘要为 0 个高危/严重。不得为了缩短面板显示而改成未固定的 `nightly` 标签，也不得换回旧镜像。
 
 数据与权限边界：
 
@@ -241,6 +268,7 @@ Compose 包含两个服务：
 - Watchtower 根文件系统只读，仅使用 16 MiB `/tmp`，移除全部 Linux capabilities，禁止提权，并限制为 256 MiB 内存和 128 个 PID。
 - Watchtower 只更新带 `com.centurylinklabs.watchtower.enable=true` 标签的容器。
 - Watchtower 不做周期轮询，只响应后台“系统维护”的更新请求。
+- sub2api、PostgreSQL 和 Redis 当前 Compose 均不带 Watchtower 更新标签，正常更新选择逻辑不会重建这些容器。
 
 在线更新链路：
 
@@ -249,6 +277,15 @@ Compose 包含两个服务：
 3. Adapter 使用内部令牌经控制网络调用 `http://adapter-updater:8080/v1/update`。
 4. Watchtower 拉取 `latest` 并按需重建 Adapter。
 5. SQLite 数据卷不变。
+
+在线更新影响边界：
+
+- 正常更新只停止并重建 `sub2api-moderation-adapter`；不会执行 sub2api 项目的 `docker compose down`，不会删除外部业务网络，也不会挂载或修改 sub2api/PostgreSQL/Redis 数据目录。
+- Adapter 重建期间会有数秒审核不可用窗口；sub2api 主服务继续运行，但这段时间的审核请求可能超时或按 sub2api 策略 fail-open。
+- `WATCHTOWER_CLEANUP=true` 只清理被成功更新的 Adapter 旧镜像，不删除 sub2api 镜像、容器或数据卷。版本标签仍保留在 Docker Hub，可重新拉取回滚。
+- 用户已明确决定不增加 Watchtower 的容器名称参数白名单，当前依赖 `WATCHTOWER_LABEL_ENABLE=true` 与 Adapter 专属标签限制正常更新目标。
+- `/var/run/docker.sock` 是宿主机高权限接口；只读根文件系统、`cap_drop` 和 `no-new-privileges` 不能从根本上限制通过 Docker API 的权限。固定镜像摘要、内部控制网络、随机令牌和标签过滤降低风险，但不能形成对恶意更新器的强隔离，后续不得弱化这些边界。
+- 2026-07-16/17 已用临时 Docker 网络验证：sub2api 容器可通过 `http://sub2api-moderation-adapter:18080/healthz` 访问 Adapter；更新器无宿主机端口；后台在线更新通过 `adapter-control` 网络成功触发。
 
 ## 9. 本地测试环境
 
