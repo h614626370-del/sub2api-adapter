@@ -1,0 +1,12 @@
+node_modules
+dist
+release
+data
+logs
+internal/adapter/data
+internal/adapter/web/dist
+configs/config.json
+*.log
+*.db
+*.db-shm
+*.db-wal

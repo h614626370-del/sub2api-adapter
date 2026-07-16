@@ -1,0 +1,44 @@
+services:
+  moderation-adapter:
+    image: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}:${ADAPTER_VERSION:-latest}
+    container_name: sub2api-moderation-adapter
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ADAPTER_CONFIG: /app/configs/config.json
+      ADAPTER_LISTEN_ADDR: ${ADAPTER_LISTEN_ADDR:-127.0.0.1:18080}
+      ADAPTER_DB: ${ADAPTER_DB:-/app/data/adapter.db}
+      ADAPTER_UPDATE_URL: http://127.0.0.1:18081/v1/update
+      ADAPTER_UPDATE_TOKEN: ${ADAPTER_UPDATE_TOKEN:?请在 .env 中设置 ADAPTER_UPDATE_TOKEN}
+      ADAPTER_IMAGE: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}
+      ADAPTER_UPDATE_CHANNEL: ${ADAPTER_UPDATE_CHANNEL:-latest}
+      # 运行配置优先在后台页面填写；环境变量只作为高级覆盖项。
+    volumes:
+      - ${ADAPTER_CONFIG_DIR:-./configs}:/app/configs:ro
+      - adapter-data:/app/data
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  adapter-updater:
+    image: containrrr/watchtower:1.7.1
+    container_name: sub2api-adapter-updater
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18081:8080"
+    environment:
+      WATCHTOWER_HTTP_API_UPDATE: "true"
+      WATCHTOWER_HTTP_API_TOKEN: ${ADAPTER_UPDATE_TOKEN:?请在 .env 中设置 ADAPTER_UPDATE_TOKEN}
+      WATCHTOWER_HTTP_API_PERIODIC_POLLS: "false"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  adapter-data:

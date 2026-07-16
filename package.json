@@ -1,0 +1,22 @@
+{
+  "name": "sub2api-moderation-adapter-admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5178",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5179"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.3",
+    "lucide-vue-next": "^0.561.0",
+    "vite": "^7.3.0",
+    "vue": "^3.5.26"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "typescript": "^5.9.3",
+    "vue-tsc": "^3.1.8"
+  }
+}

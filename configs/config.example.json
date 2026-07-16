@@ -1,0 +1,138 @@
+{
+  "listen_addr": "127.0.0.1:18080",
+  "database_path": "data/adapter.db",
+  "auth_tokens": ["replace-with-a-long-random-token"],
+  "force_allow": false,
+  "max_body_bytes": 16777216,
+  "direct_model_audit": false,
+  "miss_sample_rate": 0.3,
+  "audit_on_keyword_hit": true,
+  "min_text_chars": 1,
+  "max_text_chars": 12000,
+  "image_audit_mode": "triggered",
+  "image_sample_rate": 0.05,
+  "max_images_per_request": 1,
+  "allow_data_url_image": true,
+  "hash_salt": "replace-with-random-hash-salt",
+  "result_score_category": "illicit",
+  "log_raw_input": false,
+  "event_retention": 1000,
+  "event_retention_days": 30,
+  "estimated_prompt_price_usd_per_1m": 0.022,
+  "estimated_completion_price_usd_per_1m": 0.216,
+  "estimated_cached_price_usd_per_1m": 0,
+  "decision_cache": {
+    "enabled": true,
+    "allow_ttl_seconds": 3600,
+    "block_ttl_seconds": 2592000
+  },
+  "image_provider_enabled": true,
+  "image_provider": {
+    "type": "chat_json",
+    "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key": "",
+    "model": "qwen3-vl-flash",
+    "enable_few_shot": false,
+    "wrap_user_input": true,
+    "temperature": 0,
+    "top_p": 1,
+    "max_tokens": 300,
+    "enable_search": false,
+    "enable_thinking": false,
+    "thinking_budget": 1,
+    "enable_high_resolution_images": false,
+    "timeout_ms": 3500
+  },
+  "provider": {
+    "type": "chat_json",
+    "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key": "replace-with-upstream-api-key",
+    "secret_id": "",
+    "secret_key": "",
+    "region": "",
+    "biz_type": "",
+    "model": "qwen-flash",
+    "system_prompt": "",
+    "active_prompt_template_id": "default-cyber",
+    "prompt_templates": [
+      {
+        "id": "default-cyber",
+        "name": "默认网络安全审核",
+        "description": "上游直接输出最终 confidence，Adapter 写入 illicit。",
+        "system_prompt": ""
+      }
+    ],
+    "enable_few_shot": true,
+    "wrap_user_input": true,
+    "temperature": 0,
+    "top_p": 1,
+    "max_tokens": 300,
+    "enable_search": false,
+    "enable_thinking": false,
+    "thinking_budget": 1,
+    "timeout_ms": 2500,
+    "disabled": false,
+    "headers": {}
+  },
+  "provider_label_mapping": [
+    {"provider_label": "辱骂", "target_category": "harassment"},
+    {"provider_label": "威胁", "target_category": "harassment/threatening"},
+    {"provider_label": "仇恨", "target_category": "hate"},
+    {"provider_label": "诈骗", "target_category": "illicit"},
+    {"provider_label": "黑产", "target_category": "illicit"},
+    {"provider_label": "涉政", "target_category": "illicit"},
+    {"provider_label": "色情", "target_category": "sexual"},
+    {"provider_label": "未成年色情", "target_category": "sexual/minors"},
+    {"provider_label": "血腥", "target_category": "violence/graphic"}
+  ],
+  "keyword_sets": [
+    {
+      "name": "网络安全",
+      "enabled": true,
+      "risk_domain": "cyber",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["逆向", "破解", "绕过", "越权", "提权", "sql注入", "xss", "rce", "shell", "payload", "木马", "免杀", "钓鱼", "爆破"]
+    },
+    {
+      "name": "账号凭证",
+      "enabled": true,
+      "risk_domain": "credential",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["盗号", "撞库", "cookie", "token", "access_key", "私钥", "信用卡", "身份证"]
+    },
+    {
+      "name": "滥用营销",
+      "enabled": true,
+      "risk_domain": "abuse",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["群发", "引流", "养号", "验证码平台", "接码", "轰炸"]
+    },
+    {
+      "name": "色情",
+      "enabled": true,
+      "risk_domain": "sexual",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["裸照", "未成年", "色情", "涉黄", "性器官", "生殖器", "阴茎", "阴道", "裸体", "裸露", "露点", "成人内容"]
+    },
+    {
+      "name": "暴力违禁",
+      "enabled": true,
+      "risk_domain": "violence",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["爆炸物", "枪支", "毒品", "自制武器"]
+    },
+    {
+      "name": "自伤",
+      "enabled": true,
+      "risk_domain": "self_harm",
+      "match_type": "contains",
+      "normalized": true,
+      "keywords": ["自杀", "自残", "安眠药"]
+    }
+  ]
+}
