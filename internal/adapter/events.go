@@ -28,3 +28,12 @@ func (s *eventStore) List() []event {
 	copy(out, s.items)
 	return out
 }
+
+func (s *eventStore) SetLimit(limit int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.limit = limit
+	if limit > 0 && len(s.items) > limit {
+		s.items = s.items[:limit]
+	}
+}

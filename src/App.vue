@@ -800,14 +800,14 @@ onMounted(() => {
     <form class="login-panel" @submit.prevent="login">
       <div class="brand login-brand"><Shield :size="20" /><strong>Risk Adapter</strong></div>
       <h1>后台登录</h1>
-      <p>使用固定用户名密码进入管理后台。</p>
+      <p>使用部署时生成的用户名密码进入管理后台。</p>
       <Field label="用户名">
         <input v-model="loginUsername" autocomplete="username" />
       </Field>
       <Field label="密码">
         <input v-model="loginPassword" type="password" autocomplete="current-password" />
       </Field>
-      <p class="field-hint">默认账号：admin / admin123456</p>
+      <p class="field-hint">安装脚本会显示初始密码，并保存在部署目录的 .env 中。</p>
       <p v-if="loginError" class="login-error">{{ loginError }}</p>
       <button class="primary" :disabled="loginBusy" type="submit">{{ loginBusy ? '登录中' : '登录' }}</button>
     </form>

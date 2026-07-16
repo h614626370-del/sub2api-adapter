@@ -6,9 +6,12 @@ import (
 )
 
 type decisionCache struct {
-	mu    sync.Mutex
-	items map[string]cacheItem
+	mu        sync.Mutex
+	items     map[string]cacheItem
+	lastPrune time.Time
 }
+
+const maxDecisionCacheEntries = 10000
 
 type cacheItem struct {
 	Decision  decision
@@ -39,7 +42,39 @@ func (c *decisionCache) Set(key string, d decision, ttl time.Duration) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items[key] = cacheItem{Decision: d, ExpiresAt: timeNow().Add(ttl)}
+	now := timeNow()
+	if c.lastPrune.IsZero() || now.Sub(c.lastPrune) >= time.Minute {
+		c.pruneExpiredLocked(now)
+	}
+	if _, exists := c.items[key]; !exists && len(c.items) >= maxDecisionCacheEntries {
+		c.evictOneLocked()
+	}
+	c.items[key] = cacheItem{Decision: d, ExpiresAt: now.Add(ttl)}
+}
+
+func (c *decisionCache) PruneExpired() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pruneExpiredLocked(timeNow())
+}
+
+func (c *decisionCache) pruneExpiredLocked(now time.Time) int {
+	c.lastPrune = now
+	deleted := 0
+	for key, item := range c.items {
+		if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
+			delete(c.items, key)
+			deleted++
+		}
+	}
+	return deleted
+}
+
+func (c *decisionCache) evictOneLocked() {
+	for key := range c.items {
+		delete(c.items, key)
+		return
+	}
 }
 
 func (c *decisionCache) Clear(action string) int {
@@ -60,11 +95,8 @@ func (c *decisionCache) Stats() map[string]int {
 	defer c.mu.Unlock()
 	out := map[string]int{"allow": 0, "block": 0, "total": 0}
 	now := timeNow()
-	for key, item := range c.items {
-		if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
-			delete(c.items, key)
-			continue
-		}
+	c.pruneExpiredLocked(now)
+	for _, item := range c.items {
 		out["total"]++
 		out[item.Decision.Action]++
 	}

@@ -81,14 +81,23 @@ fi
 mkdir -p "${INSTALL_DIR}/configs"
 
 UPDATE_TOKEN=""
+ADMIN_PASSWORD=""
 if [[ -f "${INSTALL_DIR}/.env" ]]; then
   UPDATE_TOKEN="$(sed -n 's/^ADAPTER_UPDATE_TOKEN=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
+  ADMIN_PASSWORD="$(sed -n 's/^ADAPTER_ADMIN_PASSWORD=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
 fi
 if [[ -z "$UPDATE_TOKEN" ]]; then
   if command -v openssl >/dev/null 2>&1; then
     UPDATE_TOKEN="$(openssl rand -hex 32)"
   else
     UPDATE_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
+fi
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    ADMIN_PASSWORD="$(openssl rand -hex 16)"
+  else
+    ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   fi
 fi
 
@@ -99,7 +108,11 @@ ADAPTER_IMAGE=${IMAGE}
 ADAPTER_VERSION=${VERSION}
 ADAPTER_UPDATE_CHANNEL=${VERSION}
 ADAPTER_UPDATE_TOKEN=${UPDATE_TOKEN}
+ADAPTER_ADMIN_USERNAME=admin
+ADAPTER_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 ADAPTER_CONFIG_DIR=./configs
+ADAPTER_MEMORY_LIMIT=512m
+UPDATER_MEMORY_LIMIT=256m
 HTTP_PROXY=${PROXY_URL}
 HTTPS_PROXY=${PROXY_URL}
 NO_PROXY=${NO_PROXY_VALUE}
@@ -121,14 +134,32 @@ services:
       ADAPTER_UPDATE_TOKEN: ${ADAPTER_UPDATE_TOKEN:?ADAPTER_UPDATE_TOKEN is required}
       ADAPTER_IMAGE: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}
       ADAPTER_UPDATE_CHANNEL: ${ADAPTER_UPDATE_CHANNEL:-latest}
+      ADAPTER_ADMIN_USERNAME: ${ADAPTER_ADMIN_USERNAME:-admin}
+      ADAPTER_ADMIN_PASSWORD: ${ADAPTER_ADMIN_PASSWORD:?ADAPTER_ADMIN_PASSWORD is required}
     volumes:
       - ${ADAPTER_CONFIG_DIR:-./configs}:/app/configs:ro
       - adapter-data:/app/data
     labels:
       com.centurylinklabs.watchtower.enable: "true"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: ${ADAPTER_MEMORY_LIMIT:-512m}
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${ADAPTER_LISTEN_ADDR##*:}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   adapter-updater:
-    image: containrrr/watchtower:1.7.1
+    image: nickfedor/watchtower:nightly@sha256:011cbd0246d247f8827a2624dd6202d8b0d1a3d8b9c9fc7937b427e37aa5f2c9
     container_name: sub2api-adapter-updater
     restart: unless-stopped
     ports:
@@ -147,6 +178,15 @@ services:
       no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: ${UPDATER_MEMORY_LIMIT:-256m}
 
 volumes:
   adapter-data:
@@ -189,4 +229,6 @@ echo "sub2api Adapter is ready."
 echo "Install directory: ${INSTALL_DIR}"
 echo "Image: ${IMAGE}:${VERSION}"
 echo "Admin URL: http://${LISTEN_ADDR}/admin"
+echo "Admin username: admin"
+echo "Admin password: ${ADMIN_PASSWORD}"
 echo "Online updates are available on the System Maintenance page."

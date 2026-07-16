@@ -182,6 +182,9 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 16 << 20
 	}
+	if cfg.MaxBodyBytes > 32<<20 {
+		cfg.MaxBodyBytes = 32 << 20
+	}
 	cfg.MissSampleRate = clamp01(cfg.MissSampleRate)
 	cfg.ImageSampleRate = clamp01(cfg.ImageSampleRate)
 	if cfg.MaxTextChars <= 0 || cfg.MaxTextChars > 12000 {
@@ -193,12 +196,18 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.MaxImages <= 0 {
 		cfg.MaxImages = 1
 	}
+	if cfg.MaxImages > 8 {
+		cfg.MaxImages = 8
+	}
 	cfg.ResultScoreCategory = normalizeCategory(strings.TrimSpace(cfg.ResultScoreCategory))
 	if cfg.ResultScoreCategory == "" {
 		cfg.ResultScoreCategory = "illicit"
 	}
 	if cfg.EventRetention <= 0 {
 		cfg.EventRetention = 1000
+	}
+	if cfg.EventRetention > 10000 {
+		cfg.EventRetention = 10000
 	}
 	if cfg.EventRetentionDays <= 0 {
 		cfg.EventRetentionDays = 30
@@ -214,6 +223,9 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.Provider.TimeoutMS <= 0 {
 		cfg.Provider.TimeoutMS = 2500
+	}
+	if cfg.Provider.TimeoutMS > 30000 {
+		cfg.Provider.TimeoutMS = 30000
 	}
 	if cfg.Provider.Model == "" {
 		cfg.Provider.Model = "qwen-flash"
@@ -241,6 +253,9 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.Provider.MaxTokens <= 0 {
 		cfg.Provider.MaxTokens = 300
 	}
+	if cfg.Provider.MaxTokens > 4096 {
+		cfg.Provider.MaxTokens = 4096
+	}
 	if cfg.Provider.ThinkingBudget <= 0 {
 		cfg.Provider.ThinkingBudget = 1
 	}
@@ -249,6 +264,18 @@ func normalizeConfig(cfg Config) (Config, error) {
 	case "off", "triggered", "sampled", "all":
 	default:
 		cfg.ImageAuditMode = "triggered"
+	}
+	if cfg.DecisionCache.AllowTTLSeconds <= 0 {
+		cfg.DecisionCache.AllowTTLSeconds = 3600
+	}
+	if cfg.DecisionCache.AllowTTLSeconds > 86400 {
+		cfg.DecisionCache.AllowTTLSeconds = 86400
+	}
+	if cfg.DecisionCache.BlockTTLSeconds <= 0 {
+		cfg.DecisionCache.BlockTTLSeconds = 2592000
+	}
+	if cfg.DecisionCache.BlockTTLSeconds > 7776000 {
+		cfg.DecisionCache.BlockTTLSeconds = 7776000
 	}
 	cfg.DecisionCache.allowTTL = time.Duration(cfg.DecisionCache.AllowTTLSeconds) * time.Second
 	cfg.DecisionCache.blockTTL = time.Duration(cfg.DecisionCache.BlockTTLSeconds) * time.Second
@@ -542,11 +569,17 @@ func normalizeImageProviderConfig(image ProviderConfig, text ProviderConfig) Pro
 	if image.MaxTokens <= 0 {
 		image.MaxTokens = 300
 	}
+	if image.MaxTokens > 4096 {
+		image.MaxTokens = 4096
+	}
 	if image.ThinkingBudget <= 0 {
 		image.ThinkingBudget = 1
 	}
 	if image.TimeoutMS <= 0 {
 		image.TimeoutMS = 3500
+	}
+	if image.TimeoutMS > 30000 {
+		image.TimeoutMS = 30000
 	}
 	image = normalizePromptTemplates(image)
 	return image

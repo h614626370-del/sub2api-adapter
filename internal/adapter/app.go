@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"crypto/hmac"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +32,9 @@ type App struct {
 	randMu        sync.Mutex
 	rand          *rand.Rand
 	cleanupCancel context.CancelFunc
+	adminUsername string
+	adminPassword string
+	adminSecret   []byte
 }
 
 func NewApp(cfg Config) (*App, error) {
@@ -65,6 +70,13 @@ func NewApp(cfg Config) (*App, error) {
 		return nil, err
 	}
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	adminSecret := make([]byte, 32)
+	if _, err := cryptorand.Read(adminSecret); err != nil {
+		cleanupCancel()
+		_ = st.Close()
+		return nil, fmt.Errorf("generate admin session secret: %w", err)
+	}
+	adminUsername, adminPassword := adminCredentials()
 	app := &App{
 		cfg:           cfg,
 		keywords:      engine,
@@ -76,7 +88,11 @@ func NewApp(cfg Config) (*App, error) {
 		events:        newEventStore(cfg.EventRetention),
 		rand:          rand.New(rand.NewSource(timeNow().UnixNano())),
 		cleanupCancel: cleanupCancel,
+		adminUsername: adminUsername,
+		adminPassword: adminPassword,
+		adminSecret:   adminSecret,
 	}
+	_, _ = st.PruneDecisionCache(context.Background(), maxDecisionCacheEntries)
 	go app.runEventCleanupLoop(cleanupCtx)
 	return app, nil
 }
@@ -124,7 +140,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/api/image-provider/test", a.handleImageProviderTest)
 	mux.HandleFunc("POST /admin/api/image-provider/test", a.handleImageProviderTest)
 	mux.HandleFunc("GET /admin/", a.handleAdmin)
-	return mux
+	return securityHeaders(mux)
 }
 
 func (a *App) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +237,7 @@ func (a *App) handleModeration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) runEventCleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(time.Hour)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -234,6 +250,10 @@ func (a *App) runEventCleanupLoop(ctx context.Context) {
 }
 
 func (a *App) cleanupEvents(ctx context.Context) {
+	a.cache.PruneExpired()
+	if _, err := a.store.PruneDecisionCache(ctx, maxDecisionCacheEntries); err != nil {
+		slog.Warn("decision_cache_cleanup_failed", "error", err)
+	}
 	cfg := a.currentConfig()
 	result, err := a.store.PruneEvents(ctx, cfg.EventRetentionDays, cfg.EventRetention)
 	if err != nil {
@@ -505,23 +525,35 @@ func (a *App) authorized(r *http.Request) bool {
 
 func (a *App) adminAuthorized(w http.ResponseWriter, r *http.Request) bool {
 	_ = w
-	return validAdminSessionCookie(r)
+	return a.validAdminSessionCookie(r)
 }
 
 const adminSessionCookieName = "sub2api_admin_session"
-const adminLoginUsername = "admin"
-const adminLoginPassword = "admin123456"
-const adminSessionSecret = "sub2api-adapter-fixed-admin-login-v1"
+const defaultAdminUsername = "admin"
+const defaultAdminPassword = "admin123456"
 
-func setAdminSessionCookie(w http.ResponseWriter) {
+func adminCredentials() (string, string) {
+	username := strings.TrimSpace(os.Getenv("ADAPTER_ADMIN_USERNAME"))
+	if username == "" {
+		username = defaultAdminUsername
+	}
+	password := os.Getenv("ADAPTER_ADMIN_PASSWORD")
+	if password == "" {
+		password = defaultAdminPassword
+	}
+	return username, password
+}
+
+func (a *App) setAdminSessionCookie(w http.ResponseWriter, r *http.Request) {
 	expires := timeNow().Add(12 * time.Hour)
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminSessionCookieName,
-		Value:    signAdminSession(expires.Unix()),
+		Value:    a.signAdminSession(expires.Unix()),
 		Path:     "/admin",
 		Expires:  expires,
 		MaxAge:   int((12 * time.Hour).Seconds()),
 		HttpOnly: true,
+		Secure:   requestIsHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 }
@@ -538,7 +570,7 @@ func clearAdminSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-func validAdminSessionCookie(r *http.Request) bool {
+func (a *App) validAdminSessionCookie(r *http.Request) bool {
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err != nil {
 		return false
@@ -551,16 +583,34 @@ func validAdminSessionCookie(r *http.Request) bool {
 	if err != nil || timeNow().Unix() > expiresUnix {
 		return false
 	}
-	want := signAdminSession(expiresUnix)
+	want := a.signAdminSession(expiresUnix)
 	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(want)) == 1
 }
 
-func signAdminSession(expiresUnix int64) string {
+func (a *App) signAdminSession(expiresUnix int64) string {
 	expires := strconv.FormatInt(expiresUnix, 10)
-	mac := hmac.New(sha256.New, []byte(adminSessionSecret))
+	mac := hmac.New(sha256.New, a.adminSecret)
 	_, _ = mac.Write([]byte(expires))
 	sum := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return expires + "." + sum
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	return r != nil && (r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https"))
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (a *App) currentConfig() Config {
@@ -641,6 +691,7 @@ func (a *App) replaceConfig(ctx context.Context, next Config, actor string, sour
 	a.provider = provider
 	a.imageProvider = imageProvider
 	a.cfgMu.Unlock()
+	a.events.SetLimit(normalized.EventRetention)
 	return nil
 }
 

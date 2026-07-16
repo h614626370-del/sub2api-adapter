@@ -7,20 +7,38 @@ services:
     environment:
       ADAPTER_CONFIG: /app/configs/config.json
       ADAPTER_LISTEN_ADDR: ${ADAPTER_LISTEN_ADDR:-127.0.0.1:18080}
-      ADAPTER_DB: ${ADAPTER_DB:-/app/data/adapter.db}
+      ADAPTER_DB: /app/data/adapter.db
       ADAPTER_UPDATE_URL: http://127.0.0.1:18081/v1/update
       ADAPTER_UPDATE_TOKEN: ${ADAPTER_UPDATE_TOKEN:?请在 .env 中设置 ADAPTER_UPDATE_TOKEN}
       ADAPTER_IMAGE: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}
       ADAPTER_UPDATE_CHANNEL: ${ADAPTER_UPDATE_CHANNEL:-latest}
+      ADAPTER_ADMIN_USERNAME: ${ADAPTER_ADMIN_USERNAME:-admin}
+      ADAPTER_ADMIN_PASSWORD: ${ADAPTER_ADMIN_PASSWORD:?请在 .env 中设置 ADAPTER_ADMIN_PASSWORD}
       # 运行配置优先在后台页面填写；环境变量只作为高级覆盖项。
     volumes:
       - ${ADAPTER_CONFIG_DIR:-./configs}:/app/configs:ro
       - adapter-data:/app/data
     labels:
       com.centurylinklabs.watchtower.enable: "true"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: ${ADAPTER_MEMORY_LIMIT:-512m}
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${ADAPTER_LISTEN_ADDR##*:}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   adapter-updater:
-    image: containrrr/watchtower:1.7.1
+    image: nickfedor/watchtower:nightly@sha256:011cbd0246d247f8827a2624dd6202d8b0d1a3d8b9c9fc7937b427e37aa5f2c9
     container_name: sub2api-adapter-updater
     restart: unless-stopped
     ports:
@@ -39,6 +57,15 @@ services:
       no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: ${UPDATER_MEMORY_LIMIT:-256m}
 
 volumes:
   adapter-data:

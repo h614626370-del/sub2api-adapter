@@ -88,7 +88,7 @@
 
 ## 4. 重要默认值
 
-- 管理后台固定登录：`admin / admin123456`。这是当前明确要求，不使用后台 token 登录。
+- 管理后台使用用户名密码登录，不使用后台 token。独立安装脚本默认使用用户名 `admin` 并生成随机强密码，保存在权限为 `600` 的部署 `.env` 中。
 - Adapter 监听：`127.0.0.1:18080`；虚拟机为了局域网访问使用 `.env` 覆盖为 `0.0.0.0:18080`。
 - 数据库：`/app/data/adapter.db`。
 - 综合结果字段：`illicit`。
@@ -152,6 +152,7 @@ go test ./...
 pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
   -BaseUrl http://127.0.0.1:18080 `
   -Token "<sub2api调用密钥>" `
+  -AdminPassword "<管理员密码>" `
   -ClearCache `
   -Assert
 ```
@@ -176,7 +177,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
 标准发布命令：
 
 ```powershell
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.5
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.6
 ```
 
 发布脚本应同时推送：
@@ -225,14 +226,17 @@ docker compose -f deploy/docker-compose.yml up -d
 Compose 包含两个服务：
 
 - `moderation-adapter`：`614626370/sub2api-adapter:latest`，使用 host 网络。
-- `adapter-updater`：`containrrr/watchtower:1.7.1`，只把 HTTP API 映射到宿主机 `127.0.0.1:18081`。
+- `adapter-updater`：使用按摘要固定的 `nickfedor/watchtower` 维护分支镜像，只把 HTTP API 映射到宿主机 `127.0.0.1:18081`。变更摘要前必须重新做镜像漏洞扫描和更新 API 回归。
 
 数据与权限边界：
 
 - Adapter 挂载 `adapter-data:/app/data`，SQLite 数据必须一直复用该卷。
+- Docker Compose 强制使用容器内的 `/app/data/adapter.db`；systemd 直跑时使用宿主机 `/opt/sub2api-adapter/data/adapter.db`，两者不要混用。
 - Adapter 只读挂载 `${ADAPTER_CONFIG_DIR:-./configs}:/app/configs`。
+- Adapter 根文件系统只读，仅 `/app/data` 和 32 MiB 的 `/tmp` 可写；默认限制 512 MiB 内存和 256 个 PID，并移除全部 Linux capabilities。
 - 只有 Watchtower 挂载 `/var/run/docker.sock`。
 - Adapter 不得直接挂载 Docker Socket。
+- Watchtower 根文件系统只读，仅使用 16 MiB `/tmp`，移除全部 Linux capabilities，禁止提权，并限制为 256 MiB 内存和 128 个 PID。
 - Watchtower 只更新带 `com.centurylinklabs.watchtower.enable=true` 标签的容器。
 - Watchtower 不做周期轮询，只响应后台“系统维护”的更新请求。
 

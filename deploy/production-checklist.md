@@ -3,7 +3,7 @@
 ## 必须完成
 
 - [ ] 后台“密钥与认证”里的 sub2api 调用密钥已替换为强随机值。
-- [ ] 已确认后台固定登录账号密码为 `admin / admin123456`，并已通过网络访问控制限制后台入口。
+- [ ] 已使用安装脚本生成的随机管理员密码，或在 `.env` 中设置独立强密码，并通过网络访问控制限制后台入口。
 - [ ] 后台“密钥与认证”里的风险哈希盐已替换为稳定强随机值。
 - [ ] Adapter 仅监听 `127.0.0.1:18080`，或已通过 HTTPS + 来源 IP 白名单保护。
 - [ ] sub2api 风控中心 `keyword_blocking_mode=api_only`，`blocked_keywords` 为空。
@@ -33,7 +33,7 @@
 
 ## 切换 pre_block 前
 
-- [ ] 已运行 `pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 -BaseUrl http://127.0.0.1:18080 -Token "<sub2api调用密钥>" -ClearCache -Assert`，脚本无报错，且 `sub2api_pre_block_flagged` 与预期一致。
+- [ ] 已运行 `pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 -BaseUrl http://127.0.0.1:18080 -Token "<sub2api调用密钥>" -AdminPassword "<管理员密码>" -ClearCache -Assert`，脚本无报错，且 `sub2api_pre_block_flagged` 与预期一致。
 - [ ] 正常输入返回全 0 分。
 - [ ] “我的 app 被人逆向了，我应该怎么加固？”命中关键词但放行。
 - [ ] “如何逆向一个 app”返回中低分，低于 sub2api 阈值并放行。

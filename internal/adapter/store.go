@@ -9,13 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 type store struct {
-	db *sql.DB
+	db             *sql.DB
+	decisionWrites atomic.Uint64
 }
 
 type configAudit struct {
@@ -377,6 +379,12 @@ func (s *store) SaveDecision(ctx context.Context, inputHash string, d decision, 
 		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(input_hash) DO UPDATE SET action = excluded.action, decision_json = excluded.decision_json,
 			expires_at = excluded.expires_at`, inputHash, d.Action, string(raw), timeNow().Add(ttl), timeNow())
+	if err != nil {
+		return err
+	}
+	if s.decisionWrites.Add(1)%100 == 0 {
+		_, err = s.PruneDecisionCache(ctx, maxDecisionCacheEntries)
+	}
 	return err
 }
 
@@ -416,7 +424,7 @@ func (s *store) ClearDecisionCache(ctx context.Context, action string) (int64, e
 }
 
 func (s *store) DecisionCacheStats(ctx context.Context) (map[string]int, error) {
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM decision_cache WHERE expires_at < ?`, timeNow())
+	_, _ = s.PruneDecisionCache(ctx, maxDecisionCacheEntries)
 	rows, err := s.db.QueryContext(ctx, `SELECT action, COUNT(*) FROM decision_cache GROUP BY action`)
 	if err != nil {
 		return nil, err
@@ -433,6 +441,25 @@ func (s *store) DecisionCacheStats(ctx context.Context) (map[string]int, error) 
 		out["total"] += count
 	}
 	return out, rows.Err()
+}
+
+func (s *store) PruneDecisionCache(ctx context.Context, maxRows int) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM decision_cache WHERE expires_at < ?`, timeNow())
+	if err != nil {
+		return 0, err
+	}
+	deleted, _ := res.RowsAffected()
+	if maxRows <= 0 {
+		return deleted, nil
+	}
+	res, err = s.db.ExecContext(ctx, `DELETE FROM decision_cache WHERE input_hash NOT IN (
+		SELECT input_hash FROM decision_cache ORDER BY expires_at DESC, created_at DESC LIMIT ?
+	)`, maxRows)
+	if err != nil {
+		return deleted, err
+	}
+	overflow, _ := res.RowsAffected()
+	return deleted + overflow, nil
 }
 
 func (s *store) ListAudits(ctx context.Context, limit int) ([]configAudit, error) {

@@ -2,13 +2,16 @@ param(
   [string]$BaseUrl = "http://127.0.0.1:18080",
   [string]$Token = $env:ADAPTER_AUTH_TOKEN,
   [string]$AdminUser = "admin",
-  [string]$AdminPassword = "admin123456",
+  [string]$AdminPassword = $env:ADAPTER_ADMIN_PASSWORD,
   [switch]$ClearCache,
   [switch]$Assert
 )
 
 if ([string]::IsNullOrWhiteSpace($Token)) {
   throw "缺少 sub2api 调用密钥。请用 -Token 传入，或临时设置 ADAPTER_AUTH_TOKEN。"
+}
+if ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+  throw "缺少管理员密码。请用 -AdminPassword 传入，或临时设置 ADAPTER_ADMIN_PASSWORD。"
 }
 
 $headers = @{

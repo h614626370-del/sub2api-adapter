@@ -16,6 +16,7 @@ func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -24,13 +25,13 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请求体不是合法 JSON", http.StatusBadRequest)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(in.Username)), []byte(adminLoginUsername)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(in.Password), []byte(adminLoginPassword)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(in.Username)), []byte(a.adminUsername)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(in.Password), []byte(a.adminPassword)) != 1 {
 		http.Error(w, "用户名或密码不正确", http.StatusUnauthorized)
 		return
 	}
-	setAdminSessionCookie(w)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": adminLoginUsername})
+	a.setAdminSessionCookie(w, r)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": a.adminUsername})
 }
 
 func (a *App) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +53,10 @@ func (a *App) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		evStats = eventStats{}
 	}
+	warnings := productionWarnings(cfg)
+	if a.adminPassword == defaultAdminPassword {
+		warnings = append(warnings, "管理员密码仍是公开的开发默认值；生产部署必须设置 ADAPTER_ADMIN_PASSWORD 或使用新版安装脚本生成随机密码")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"provider":                  a.currentProvider().Name(),
 		"force_allow":               cfg.ForceAllow,
@@ -67,7 +72,7 @@ func (a *App) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		"provider_key_status":       providerKeyStatus(cfg.Provider),
 		"image_provider_key_status": providerKeyStatus(effectiveImageProviderConfig(cfg)),
 		"image_provider_enabled":    cfg.ImageProviderEnabled,
-		"production_warnings":       productionWarnings(cfg),
+		"production_warnings":       dedupeStrings(warnings),
 		"database_path":             cfg.DatabasePath,
 		"events": map[string]any{
 			"total":          evStats.Total,

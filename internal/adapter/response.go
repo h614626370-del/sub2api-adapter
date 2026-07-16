@@ -1,7 +1,5 @@
 package adapter
 
-import "strings"
-
 func allowDecision(provider string) decision {
 	return decision{
 		Action:         "allow",
@@ -42,17 +40,6 @@ func decisionFromProvider(result providerResult, cfg Config, providerName string
 		Provider:        providerName,
 		RawSummary:      result.RawSummary,
 	}
-}
-
-func mapConfiguredProviderLabel(cfg Config, label string) string {
-	for _, mapping := range cfg.LabelMappings {
-		if mapping.ProviderLabel != "" && strings.Contains(label, mapping.ProviderLabel) {
-			if category := normalizeCategory(mapping.TargetCategory); category != "" {
-				return category
-			}
-		}
-	}
-	return mapProviderLabel(label)
 }
 
 func toModerationResponse(id string, model string, d decision) moderationResponse {

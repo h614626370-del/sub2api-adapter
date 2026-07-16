@@ -129,6 +129,61 @@ func TestAdminLoginSessionCookieSupportsRefreshAndLogout(t *testing.T) {
 	}
 }
 
+func TestAdminSessionCookieCannotBeReusedAcrossProcesses(t *testing.T) {
+	first := testApp(t)
+	second := testApp(t)
+	cookie := adminSessionCookie(t, first.Routes())
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	second.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("cookie from another app status=%d want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminPasswordCanBeConfiguredAndSecureCookieFollowsHTTPS(t *testing.T) {
+	t.Setenv("ADAPTER_ADMIN_USERNAME", "ops-admin")
+	t.Setenv("ADAPTER_ADMIN_PASSWORD", "a-strong-production-password")
+	app := testApp(t)
+	router := app.Routes()
+
+	wrong := httptest.NewRequest(http.MethodPost, "/admin/api/login", strings.NewReader(`{"username":"admin","password":"admin123456"}`))
+	wrong.Header.Set("Content-Type", "application/json")
+	wrongRec := httptest.NewRecorder()
+	router.ServeHTTP(wrongRec, wrong)
+	if wrongRec.Code != http.StatusUnauthorized {
+		t.Fatalf("default credentials status=%d want %d", wrongRec.Code, http.StatusUnauthorized)
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "/admin/api/login", strings.NewReader(`{"username":"ops-admin","password":"a-strong-production-password"}`))
+	login.Header.Set("Content-Type", "application/json")
+	login.Header.Set("X-Forwarded-Proto", "https")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, login)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("configured credentials status=%d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	var session *http.Cookie
+	for _, cookie := range loginRec.Result().Cookies() {
+		if cookie.Name == adminSessionCookieName {
+			session = cookie
+		}
+	}
+	if session == nil || !session.Secure || !session.HttpOnly || session.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected secure session cookie: %+v", session)
+	}
+}
+
+func TestSecurityHeadersAreApplied(t *testing.T) {
+	app := testApp(t)
+	rec := httptest.NewRecorder()
+	app.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	if rec.Header().Get("Content-Security-Policy") == "" || rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("security headers missing: %+v", rec.Header())
+	}
+}
+
 func TestEventLogCleanupRetentionAndManualClear(t *testing.T) {
 	app := testApp(t)
 	router := app.Routes()
