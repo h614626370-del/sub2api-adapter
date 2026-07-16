@@ -131,13 +131,16 @@ curl -fsSL https://raw.githubusercontent.com/h614626370-del/sub2api-adapter/main
 bash install-sub2api-adapter.sh
 ```
 
-这是独立安装脚本，服务器不需要下载源码或上传项目目录。脚本默认安装到执行时的当前目录，并自行生成 `.env` 和 `docker-compose.yml`；应先进入专门用于 Adapter 的目录再执行。
+这是独立安装脚本，服务器不需要下载源码或上传项目目录。应先启动名为 `sub2api` 的容器；脚本会自动识别它连接的业务网络，让 Adapter 直接加入同一个 Docker 网络。脚本默认安装到执行时的当前目录，并自行生成 `.env` 和 `docker-compose.yml`。
 
-默认只监听 `127.0.0.1:18080`。需要从其他机器访问时，应先配置防火墙或反向代理；确认需要直接开放后再执行：
+如果 sub2api 连接了多个网络，或者容器名称不是 `sub2api`，先查询实际网络名称，再显式传入：
 
 ```bash
-bash install-sub2api-adapter.sh --listen 0.0.0.0:18080
+docker inspect sub2api --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{println}}{{end}}'
+bash install-sub2api-adapter.sh --network deploy_sub2api-network
 ```
+
+管理后台默认只发布到宿主机 `127.0.0.1:18080`。sub2api 不通过这个宿主机端口，而是在共享网络中访问 `http://sub2api-moderation-adapter:18080`。确需从其它机器直接访问后台时，先配置防火墙或 HTTPS 反向代理，再使用 `--bind 0.0.0.0:18080`。
 
 在线更新器访问 Docker Hub 需要代理时：
 
@@ -145,7 +148,7 @@ bash install-sub2api-adapter.sh --listen 0.0.0.0:18080
 bash install-sub2api-adapter.sh --proxy http://192.168.1.2:7897
 ```
 
-脚本会安装到执行时的当前目录，自动生成在线更新令牌，并通过标准 Docker Compose 启动服务。重复执行会保留原更新令牌和数据卷。`--proxy` 只提供给在线更新器，Adapter 的模型请求保持直连。若服务器首次执行 `docker pull` 也必须走代理，还需要提前给 Docker daemon 配置代理；`--proxy` 不会修改宿主机 Docker 服务。
+脚本会安装到执行时的当前目录，自动生成在线更新令牌，并通过标准 Docker Compose 启动服务。重复执行会保留原更新令牌、管理员密码、业务网络名称和数据卷。`--proxy` 只提供给在线更新器，Adapter 的模型请求保持直连。若服务器首次执行 `docker pull` 也必须走代理，还需要提前给 Docker daemon 配置代理；`--proxy` 不会修改宿主机 Docker 服务。
 
 systemd 示例：
 
@@ -158,11 +161,11 @@ Docker Compose：
 
 ```bash
 cp deploy/adapter.env.example .env
-# 编辑 .env：至少设置 ADAPTER_UPDATE_TOKEN 和 ADAPTER_ADMIN_PASSWORD
+# 编辑 .env：至少设置 SUB2API_DOCKER_NETWORK、ADAPTER_UPDATE_TOKEN 和 ADAPTER_ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Compose 会同时启动独立更新器。只有更新器挂载 Docker Socket，Adapter 通过仅监听 `127.0.0.1:18081` 的令牌接口触发更新。Docker Hub 发布时同时推送版本标签（如 `0.0.6`）和 `latest`；运行容器使用 `latest` 才能在系统维护页发现后续版本。
+Compose 会同时启动独立更新器。Adapter 同时连接 sub2api 业务网络和独立控制网络；更新器只连接控制网络且不发布宿主机端口。只有更新器挂载 Docker Socket，Adapter 通过 `http://adapter-updater:8080` 的内部令牌接口触发更新。Docker Hub 发布时同时推送版本标签（如 `0.0.7`）和 `latest`；运行容器使用 `latest` 才能在系统维护页发现后续版本。
 
 默认容器以只读根文件系统运行，SQLite 只能写入 `adapter-data` 数据卷中的 `/app/data/adapter.db`。Adapter 默认限制为 512 MiB 内存和 256 个 PID；更新器默认限制为 256 MiB 内存和 128 个 PID，可在 `.env` 中调整。
 
@@ -170,14 +173,15 @@ Compose 会同时启动独立更新器。只有更新器挂载 Docker Socket，A
 
 ```powershell
 docker login
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.6
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.7
 ```
 
 默认仓库已内置为 `614626370/sub2api-adapter`，服务器保持 `ADAPTER_VERSION=latest`。之后在“系统维护”点击“拉取并更新”，更新器会拉取新的 `latest` 镜像并重建 Adapter；SQLite 数据卷不会被替换。
 
 生产要求：
 
-- 只监听 `127.0.0.1:18080`，跨机器部署必须 HTTPS + 来源 IP 限制。
+- 宿主机管理端口默认只发布到 `127.0.0.1:18080`，跨机器部署必须 HTTPS + 来源 IP 限制。
+- sub2api 风控中心使用 `http://sub2api-moderation-adapter:18080`，不使用宿主机 IP 或 `host.docker.internal`。
 - 在后台“密钥与认证”页面替换 sub2api 调用 token、hash salt 和上游模型 API Key。
 - 上游模型 API Key 不要写进代码仓库。
 - 先用 `observe` 运行 1-3 天，看误杀样本、P95、fail-open 和成本。

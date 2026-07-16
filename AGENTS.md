@@ -177,7 +177,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
 标准发布命令：
 
 ```powershell
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.6
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.7
 ```
 
 发布脚本应同时推送：
@@ -201,36 +201,38 @@ curl -fsSL https://raw.githubusercontent.com/h614626370-del/sub2api-adapter/main
 bash install-sub2api-adapter.sh
 ```
 
-该脚本完全独立，服务器不需要下载源码或上传项目目录。它会自行生成 `.env` 和 `docker-compose.yml`，默认安装到执行时的当前目录、监听 `127.0.0.1:18080`、自动生成并持久化 `ADAPTER_UPDATE_TOKEN`，然后执行 `docker compose pull` 和 `docker compose up -d`。应先进入专用目录再执行；重复执行会保留原更新令牌和数据卷。
+该脚本完全独立，服务器不需要下载源码或上传项目目录。应先启动名为 `sub2api` 的容器；脚本会自动检测其业务网络，也可通过 `--network` 显式指定。它会自行生成 `.env` 和 `docker-compose.yml`，默认安装到执行时的当前目录、把管理端口发布到宿主机 `127.0.0.1:18080`、自动生成并持久化 `ADAPTER_UPDATE_TOKEN`，然后执行 `docker compose pull` 和 `docker compose up -d`。应先进入专用目录再执行；重复执行会保留原更新令牌、管理员密码、业务网络名称和数据卷。
 
 常用参数：
 
 ```bash
 bash install-sub2api-adapter.sh --dir /opt/sub2api-adapter
-bash install-sub2api-adapter.sh --listen 0.0.0.0:18080
+bash install-sub2api-adapter.sh --network deploy_sub2api-network
+bash install-sub2api-adapter.sh --bind 0.0.0.0:18080
 bash install-sub2api-adapter.sh --proxy http://192.168.1.2:7897
 ```
 
 `--proxy` 只设置 Watchtower 在线更新器的代理，Adapter 模型请求保持直连。若首次 `docker compose pull` 也依赖代理，必须提前配置 Docker daemon 代理。
 
-直接监听 `0.0.0.0` 前必须配置防火墙、来源 IP 限制或 HTTPS 反向代理，不能把 `/admin` 裸露到公网。
+把管理端口发布到 `0.0.0.0` 前必须配置防火墙、来源 IP 限制或 HTTPS 反向代理，不能把 `/admin` 裸露到公网。
 
 首次部署：
 
 ```bash
 cp deploy/adapter.env.example .env
-# 至少设置一个 32 字节以上的随机 ADAPTER_UPDATE_TOKEN
+# 至少设置 SUB2API_DOCKER_NETWORK、一个 32 字节以上的随机 ADAPTER_UPDATE_TOKEN 和强管理员密码
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
 Compose 包含两个服务：
 
-- `moderation-adapter`：`614626370/sub2api-adapter:latest`，使用 host 网络。
-- `adapter-updater`：使用按摘要固定的 `nickfedor/watchtower` 维护分支镜像，只把 HTTP API 映射到宿主机 `127.0.0.1:18081`。变更摘要前必须重新做镜像漏洞扫描和更新 API 回归。
+- `moderation-adapter`：`614626370/sub2api-adapter:latest`，同时加入外部 sub2api 业务网络和项目内部控制网络；宿主机管理端口默认仅发布到 `127.0.0.1:18080`。
+- `adapter-updater`：使用按摘要固定的 `nickfedor/watchtower` 维护分支镜像，只加入内部控制网络，不发布宿主机端口。变更摘要前必须重新做镜像漏洞扫描和更新 API 回归。
 
 数据与权限边界：
 
 - Adapter 挂载 `adapter-data:/app/data`，SQLite 数据必须一直复用该卷。
+- sub2api 通过共享业务网络和容器 DNS `http://sub2api-moderation-adapter:18080` 调用 Adapter，不需要 `extra_hosts` 或宿主机网关地址。
 - Docker Compose 强制使用容器内的 `/app/data/adapter.db`；systemd 直跑时使用宿主机 `/opt/sub2api-adapter/data/adapter.db`，两者不要混用。
 - Adapter 只读挂载 `${ADAPTER_CONFIG_DIR:-./configs}:/app/configs`。
 - Adapter 根文件系统只读，仅 `/app/data` 和 32 MiB 的 `/tmp` 可写；默认限制 512 MiB 内存和 256 个 PID，并移除全部 Linux capabilities。
@@ -244,7 +246,7 @@ Compose 包含两个服务：
 
 1. 发布新版本标签和新的 `latest`。
 2. 管理员在“系统维护”点击“拉取并更新”。
-3. Adapter 使用内部令牌调用 `http://127.0.0.1:18081/v1/update`。
+3. Adapter 使用内部令牌经控制网络调用 `http://adapter-updater:8080/v1/update`。
 4. Watchtower 拉取 `latest` 并按需重建 Adapter。
 5. SQLite 数据卷不变。
 

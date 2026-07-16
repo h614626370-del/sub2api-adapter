@@ -3,26 +3,35 @@ set -Eeuo pipefail
 
 IMAGE="614626370/sub2api-adapter"
 VERSION="latest"
-LISTEN_ADDR="127.0.0.1:18080"
+HOST_BIND="127.0.0.1:18080"
+SUB2API_NETWORK=""
 INSTALL_DIR="$(pwd)"
 PROXY_URL=""
+HOST_BIND_EXPLICIT=false
+NETWORK_EXPLICIT=false
 
 usage() {
   cat <<'EOF'
 Usage: bash install-sub2api-adapter.sh [options]
 
 Options:
-  --dir PATH        Install directory. Default: current directory
-  --listen ADDRESS  Adapter listen address. Default: 127.0.0.1:18080
-  --proxy URL       Online updater proxy, for example http://192.168.1.2:7897
-  --image IMAGE     Docker image repository. Default: 614626370/sub2api-adapter
-  --version TAG     Docker image tag. Default: latest
-  -h, --help        Show this help
+  --dir PATH         Install directory. Default: current directory
+  --bind ADDRESS     Admin port published on the host. Default: 127.0.0.1:18080
+  --network NAME     Existing Docker network used by the sub2api container
+  --listen ADDRESS   Deprecated alias for --bind
+  --proxy URL        Online updater proxy, for example http://192.168.1.2:7897
+  --image IMAGE      Docker image repository. Default: 614626370/sub2api-adapter
+  --version TAG      Docker image tag. Default: latest
+  -h, --help         Show this help
 
 Examples:
   bash install-sub2api-adapter.sh
-  bash install-sub2api-adapter.sh --listen 0.0.0.0:18080
+  bash install-sub2api-adapter.sh --network deploy_sub2api-network
+  bash install-sub2api-adapter.sh --bind 0.0.0.0:18080
   bash install-sub2api-adapter.sh --proxy http://192.168.1.2:7897
+
+If --network is omitted, the script detects the Docker network attached to the
+container named "sub2api". The network must already exist.
 
 The --proxy option configures only the online updater. Model requests remain
 direct. It cannot configure the Docker daemon used for the initial image pull.
@@ -39,7 +48,9 @@ require_value() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) require_value "$@"; INSTALL_DIR="$2"; shift 2 ;;
-    --listen) require_value "$@"; LISTEN_ADDR="$2"; shift 2 ;;
+    --bind) require_value "$@"; HOST_BIND="$2"; HOST_BIND_EXPLICIT=true; shift 2 ;;
+    --network) require_value "$@"; SUB2API_NETWORK="$2"; NETWORK_EXPLICIT=true; shift 2 ;;
+    --listen) require_value "$@"; HOST_BIND="$2"; HOST_BIND_EXPLICIT=true; shift 2 ;;
     --proxy) require_value "$@"; PROXY_URL="$2"; shift 2 ;;
     --image) require_value "$@"; IMAGE="$2"; shift 2 ;;
     --version) require_value "$@"; VERSION="$2"; shift 2 ;;
@@ -48,18 +59,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for value in "$IMAGE" "$VERSION" "$LISTEN_ADDR" "$INSTALL_DIR" "$PROXY_URL"; do
+for value in "$IMAGE" "$VERSION" "$HOST_BIND" "$SUB2API_NETWORK" "$INSTALL_DIR" "$PROXY_URL"; do
   if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
     echo "Options must not contain line breaks." >&2
     exit 2
   fi
 done
-
-LISTEN_PORT="${LISTEN_ADDR##*:}"
-if [[ "$LISTEN_ADDR" != *:* || ! "$LISTEN_PORT" =~ ^[0-9]+$ || "$LISTEN_PORT" -lt 1 || "$LISTEN_PORT" -gt 65535 ]]; then
-  echo "Invalid --listen value: ${LISTEN_ADDR}. Expected HOST:PORT." >&2
-  exit 2
-fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker Engine is required. Install Docker before running this script." >&2
@@ -85,6 +90,46 @@ ADMIN_PASSWORD=""
 if [[ -f "${INSTALL_DIR}/.env" ]]; then
   UPDATE_TOKEN="$(sed -n 's/^ADAPTER_UPDATE_TOKEN=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
   ADMIN_PASSWORD="$(sed -n 's/^ADAPTER_ADMIN_PASSWORD=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
+  if [[ "$HOST_BIND_EXPLICIT" != true ]]; then
+    EXISTING_HOST_BIND="$(sed -n 's/^ADAPTER_HOST_BIND=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
+    if [[ -n "$EXISTING_HOST_BIND" ]]; then HOST_BIND="$EXISTING_HOST_BIND"; fi
+  fi
+  if [[ "$NETWORK_EXPLICIT" != true ]]; then
+    SUB2API_NETWORK="$(sed -n 's/^SUB2API_DOCKER_NETWORK=//p' "${INSTALL_DIR}/.env" | tail -n 1 | tr -d '\r')"
+  fi
+fi
+
+HOST_PORT="${HOST_BIND##*:}"
+HOST_ADDRESS="${HOST_BIND%:*}"
+if [[ "$HOST_BIND" != *:* || ! "$HOST_ADDRESS" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ || ! "$HOST_PORT" =~ ^[0-9]+$ || "$HOST_PORT" -lt 1 || "$HOST_PORT" -gt 65535 ]]; then
+  echo "Invalid --bind value: ${HOST_BIND}. Expected HOST:PORT." >&2
+  exit 2
+fi
+
+if [[ -z "$SUB2API_NETWORK" ]]; then
+  if ! docker inspect sub2api >/dev/null 2>&1; then
+    echo "Cannot auto-detect the sub2api Docker network because container 'sub2api' was not found." >&2
+    echo "Start sub2api first or pass --network NAME." >&2
+    exit 1
+  fi
+  mapfile -t DETECTED_NETWORKS < <(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{println}}{{end}}' sub2api | sed '/^$/d')
+  MATCHED_NETWORKS=()
+  for network in "${DETECTED_NETWORKS[@]}"; do
+    if [[ "$network" == *sub2api-network* ]]; then MATCHED_NETWORKS+=("$network"); fi
+  done
+  if [[ ${#MATCHED_NETWORKS[@]} -eq 1 ]]; then
+    SUB2API_NETWORK="${MATCHED_NETWORKS[0]}"
+  elif [[ ${#DETECTED_NETWORKS[@]} -eq 1 ]]; then
+    SUB2API_NETWORK="${DETECTED_NETWORKS[0]}"
+  else
+    echo "Multiple Docker networks are attached to sub2api; pass --network NAME explicitly." >&2
+    printf 'Detected: %s\n' "${DETECTED_NETWORKS[*]}" >&2
+    exit 1
+  fi
+fi
+if [[ ! "$SUB2API_NETWORK" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || ! docker network inspect "$SUB2API_NETWORK" >/dev/null 2>&1; then
+  echo "Docker network does not exist or has an invalid name: ${SUB2API_NETWORK}" >&2
+  exit 1
 fi
 if [[ -z "$UPDATE_TOKEN" ]]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -103,7 +148,8 @@ fi
 
 NO_PROXY_VALUE="localhost,127.0.0.1,::1"
 cat > "${INSTALL_DIR}/.env" <<EOF
-ADAPTER_LISTEN_ADDR=${LISTEN_ADDR}
+ADAPTER_HOST_BIND=${HOST_BIND}
+SUB2API_DOCKER_NETWORK=${SUB2API_NETWORK}
 ADAPTER_IMAGE=${IMAGE}
 ADAPTER_VERSION=${VERSION}
 ADAPTER_UPDATE_CHANNEL=${VERSION}
@@ -125,12 +171,13 @@ services:
     image: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}:${ADAPTER_VERSION:-latest}
     container_name: sub2api-moderation-adapter
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${ADAPTER_HOST_BIND:-127.0.0.1:18080}:18080"
     environment:
       ADAPTER_CONFIG: /app/configs/config.json
-      ADAPTER_LISTEN_ADDR: ${ADAPTER_LISTEN_ADDR:-127.0.0.1:18080}
+      ADAPTER_LISTEN_ADDR: 0.0.0.0:18080
       ADAPTER_DB: /app/data/adapter.db
-      ADAPTER_UPDATE_URL: http://127.0.0.1:18081/v1/update
+      ADAPTER_UPDATE_URL: http://adapter-updater:8080/v1/update
       ADAPTER_UPDATE_TOKEN: ${ADAPTER_UPDATE_TOKEN:?ADAPTER_UPDATE_TOKEN is required}
       ADAPTER_IMAGE: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}
       ADAPTER_UPDATE_CHANNEL: ${ADAPTER_UPDATE_CHANNEL:-latest}
@@ -139,6 +186,9 @@ services:
     volumes:
       - ${ADAPTER_CONFIG_DIR:-./configs}:/app/configs:ro
       - adapter-data:/app/data
+    networks:
+      - sub2api-network
+      - adapter-control
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     read_only: true
@@ -152,7 +202,7 @@ services:
     mem_limit: ${ADAPTER_MEMORY_LIMIT:-512m}
     stop_grace_period: 15s
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${ADAPTER_LISTEN_ADDR##*:}/healthz"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:18080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -162,8 +212,6 @@ services:
     image: nickfedor/watchtower:nightly@sha256:011cbd0246d247f8827a2624dd6202d8b0d1a3d8b9c9fc7937b427e37aa5f2c9
     container_name: sub2api-adapter-updater
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:18081:8080"
     environment:
       WATCHTOWER_HTTP_API_UPDATE: "true"
       WATCHTOWER_HTTP_API_TOKEN: ${ADAPTER_UPDATE_TOKEN:?ADAPTER_UPDATE_TOKEN is required}
@@ -178,6 +226,8 @@ services:
       no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - adapter-control
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -190,6 +240,13 @@ services:
 
 volumes:
   adapter-data:
+
+networks:
+  sub2api-network:
+    external: true
+    name: ${SUB2API_DOCKER_NETWORK:?SUB2API_DOCKER_NETWORK is required}
+  adapter-control:
+    driver: bridge
 COMPOSE
 
 cd "${INSTALL_DIR}"
@@ -202,24 +259,16 @@ fi
 echo "Starting sub2api Adapter..."
 "${COMPOSE[@]}" up -d --remove-orphans
 
-HEALTH_URL="http://127.0.0.1:${LISTEN_PORT}/healthz"
+HEALTH_URL="http://127.0.0.1:18080/healthz"
 healthy=false
 for _ in $(seq 1 30); do
-  if command -v curl >/dev/null 2>&1; then
-    if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; then healthy=true; break; fi
-  elif command -v wget >/dev/null 2>&1; then
-    if wget -q -T 3 -O /dev/null "$HEALTH_URL"; then healthy=true; break; fi
-  else
-    echo "Neither curl nor wget is installed; skipping the HTTP health check."
-    healthy=true
-    break
-  fi
+  if "${COMPOSE[@]}" exec -T moderation-adapter wget -q -T 3 -O /dev/null "$HEALTH_URL"; then healthy=true; break; fi
   sleep 1
 done
 
 "${COMPOSE[@]}" ps
 if [[ "$healthy" != true ]]; then
-  echo "Containers started, but ${HEALTH_URL} was not healthy within 30 seconds." >&2
+  echo "Containers started, but the Adapter was not healthy within 30 seconds." >&2
   echo "Inspect logs: cd ${INSTALL_DIR} && ${COMPOSE[*]} logs --tail 100" >&2
   exit 1
 fi
@@ -228,7 +277,9 @@ echo
 echo "sub2api Adapter is ready."
 echo "Install directory: ${INSTALL_DIR}"
 echo "Image: ${IMAGE}:${VERSION}"
-echo "Admin URL: http://${LISTEN_ADDR}/admin"
+echo "Sub2api Docker network: ${SUB2API_NETWORK}"
+echo "Sub2api moderation URL: http://sub2api-moderation-adapter:18080"
+echo "Admin URL: http://${HOST_BIND}/admin"
 echo "Admin username: admin"
 echo "Admin password: ${ADMIN_PASSWORD}"
 echo "Online updates are available on the System Maintenance page."

@@ -5,7 +5,8 @@
 - [ ] 后台“密钥与认证”里的 sub2api 调用密钥已替换为强随机值。
 - [ ] 已使用安装脚本生成的随机管理员密码，或在 `.env` 中设置独立强密码，并通过网络访问控制限制后台入口。
 - [ ] 后台“密钥与认证”里的风险哈希盐已替换为稳定强随机值。
-- [ ] Adapter 仅监听 `127.0.0.1:18080`，或已通过 HTTPS + 来源 IP 白名单保护。
+- [ ] Adapter 管理端口仅发布到宿主机 `127.0.0.1:18080`，或已通过 HTTPS + 来源 IP 白名单保护。
+- [ ] sub2api 与 Adapter 已连接同一个业务网络，审核 Base URL 使用 `http://sub2api-moderation-adapter:18080`。
 - [ ] sub2api 风控中心 `keyword_blocking_mode=api_only`，`blocked_keywords` 为空。
 - [ ] sub2api 风控中心 `sample_rate=100`，抽样逻辑放在 Adapter。
 - [ ] 后台“返回规则”里的综合结果写入字段与 sub2api 阈值字段一致，默认保持 `category_scores.illicit`。

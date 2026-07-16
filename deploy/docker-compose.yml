@@ -3,12 +3,13 @@ services:
     image: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}:${ADAPTER_VERSION:-latest}
     container_name: sub2api-moderation-adapter
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${ADAPTER_HOST_BIND:-127.0.0.1:18080}:18080"
     environment:
       ADAPTER_CONFIG: /app/configs/config.json
-      ADAPTER_LISTEN_ADDR: ${ADAPTER_LISTEN_ADDR:-127.0.0.1:18080}
+      ADAPTER_LISTEN_ADDR: 0.0.0.0:18080
       ADAPTER_DB: /app/data/adapter.db
-      ADAPTER_UPDATE_URL: http://127.0.0.1:18081/v1/update
+      ADAPTER_UPDATE_URL: http://adapter-updater:8080/v1/update
       ADAPTER_UPDATE_TOKEN: ${ADAPTER_UPDATE_TOKEN:?请在 .env 中设置 ADAPTER_UPDATE_TOKEN}
       ADAPTER_IMAGE: ${ADAPTER_IMAGE:-614626370/sub2api-adapter}
       ADAPTER_UPDATE_CHANNEL: ${ADAPTER_UPDATE_CHANNEL:-latest}
@@ -18,6 +19,9 @@ services:
     volumes:
       - ${ADAPTER_CONFIG_DIR:-./configs}:/app/configs:ro
       - adapter-data:/app/data
+    networks:
+      - sub2api-network
+      - adapter-control
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     read_only: true
@@ -31,7 +35,7 @@ services:
     mem_limit: ${ADAPTER_MEMORY_LIMIT:-512m}
     stop_grace_period: 15s
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${ADAPTER_LISTEN_ADDR##*:}/healthz"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:18080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -41,8 +45,6 @@ services:
     image: nickfedor/watchtower:nightly@sha256:011cbd0246d247f8827a2624dd6202d8b0d1a3d8b9c9fc7937b427e37aa5f2c9
     container_name: sub2api-adapter-updater
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:18081:8080"
     environment:
       WATCHTOWER_HTTP_API_UPDATE: "true"
       WATCHTOWER_HTTP_API_TOKEN: ${ADAPTER_UPDATE_TOKEN:?请在 .env 中设置 ADAPTER_UPDATE_TOKEN}
@@ -57,6 +59,8 @@ services:
       no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - adapter-control
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -69,3 +73,10 @@ services:
 
 volumes:
   adapter-data:
+
+networks:
+  sub2api-network:
+    external: true
+    name: ${SUB2API_DOCKER_NETWORK:?请在 .env 中设置 sub2api 使用的 Docker 网络名称}
+  adapter-control:
+    driver: bridge
