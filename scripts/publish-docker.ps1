@@ -10,28 +10,34 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$dockerCommand = 'docker'
+$dockerPrefix = @()
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw '未找到 docker 命令。请先安装 Docker 并完成 docker login。'
+    if (-not (Get-Command wsl -ErrorAction SilentlyContinue)) {
+        throw '未找到 docker 或 WSL。请先安装 Docker 并完成 docker login。'
+    }
+    $dockerCommand = 'wsl'
+    $dockerPrefix = @('-d', 'Ubuntu', '--', 'docker')
+}
+
+function Invoke-Docker {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    & $script:dockerCommand @script:dockerPrefix @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker 命令失败：docker $($Arguments -join ' ')"
+    }
 }
 
 $versionTag = "${Repository}:${Version}"
 $latestTag = "${Repository}:latest"
 $buildTime = (Get-Date).ToUniversalTime().ToString('o')
+$commit = (git rev-parse --short=12 HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
+    $commit = 'unknown'
+}
 
-docker build `
-    --build-arg "VERSION=$Version" `
-    --build-arg 'COMMIT=release' `
-    --build-arg "BUILD_TIME=$buildTime" `
-    --tag $versionTag `
-    --tag $latestTag `
-    .
+Invoke-Docker @('build', '--build-arg', "VERSION=$Version", '--build-arg', "COMMIT=$commit", '--build-arg', "BUILD_TIME=$buildTime", '--tag', $versionTag, '--tag', $latestTag, '.')
+Invoke-Docker @('push', $versionTag)
+Invoke-Docker @('push', $latestTag)
 
-if ($LASTEXITCODE -ne 0) { throw 'Docker 镜像构建失败。' }
-
-docker push $versionTag
-if ($LASTEXITCODE -ne 0) { throw "推送 $versionTag 失败。" }
-
-docker push $latestTag
-if ($LASTEXITCODE -ne 0) { throw "推送 $latestTag 失败。" }
-
-Write-Host "已发布 $versionTag 和 $latestTag"
+Write-Host "已发布 $versionTag 和 $latestTag（commit $commit）"
