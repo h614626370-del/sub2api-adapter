@@ -23,37 +23,10 @@ $adminSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $adminLoggedIn = $false
 
 $resultScoreCategory = "illicit"
-
-$sub2apiThresholds = @{
-  "harassment" = 0.98
-  "harassment/threatening" = 0.90
-  "hate" = 0.65
-  "hate/threatening" = 0.65
-  "illicit" = 0.95
-  "illicit/violent" = 0.95
-  "self-harm" = 0.65
-  "self-harm/intent" = 0.65
-  "self-harm/instructions" = 0.65
-  "sexual" = 0.90
-  "sexual/minors" = 0.90
-  "violence" = 0.90
-  "violence/graphic" = 0.90
-}
+$resultBlockThreshold = 0.95
 
 function Test-Sub2APIPreBlockFlagged($scores) {
-  foreach ($name in $sub2apiThresholds.Keys) {
-    $score = 0.0
-    if ($null -ne $scores) {
-      $prop = $scores.PSObject.Properties[$name]
-      if ($null -ne $prop) {
-        $score = [double]$prop.Value
-      }
-    }
-    if ($score -ge [double]$sub2apiThresholds[$name]) {
-      return $true
-    }
-  }
-  return $false
+  return (Get-CategoryScore $scores $resultScoreCategory) -ge $resultBlockThreshold
 }
 
 function Get-CategoryScore($scores, [string]$name) {
@@ -114,6 +87,9 @@ Login-Admin
 $adminConfig = Invoke-RestMethod "$BaseUrl/admin/api/config" -WebSession $adminSession
 if (-not [string]::IsNullOrWhiteSpace($adminConfig.config.result_score_category)) {
   $resultScoreCategory = [string]$adminConfig.config.result_score_category
+}
+if ($null -ne $adminConfig.config.result_block_threshold) {
+  $resultBlockThreshold = [double]$adminConfig.config.result_block_threshold
 }
 
 $samplesJson = @'

@@ -31,6 +31,7 @@ type Config struct {
 	DecisionCache        CacheConfig    `json:"decision_cache"`
 	HashSalt             string         `json:"hash_salt"`
 	ResultScoreCategory  string         `json:"result_score_category"`
+	ResultBlockThreshold float64        `json:"result_block_threshold"`
 	LogRawInput          bool           `json:"log_raw_input"`
 	KeywordSets          []KeywordSet   `json:"keyword_sets"`
 	LabelMappings        []LabelMapping `json:"provider_label_mapping"`
@@ -101,27 +102,28 @@ type LabelMapping struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:          "127.0.0.1:18080",
-		DatabasePath:        "data/adapter.db",
-		AuthTokens:          []string{"change-me-before-production"},
-		AdminToken:          "",
-		HashSalt:            generatedHashSalt(),
-		ResultScoreCategory: "illicit",
-		MaxBodyBytes:        16 << 20,
-		DirectModelAudit:    false,
-		MissSampleRate:      0.3,
-		AuditOnKeywordHit:   true,
-		MinTextChars:        1,
-		MaxTextChars:        12000,
-		ImageAuditMode:      "triggered",
-		ImageSampleRate:     0.05,
-		MaxImages:           1,
-		AllowDataURLImage:   true,
-		EventRetention:      1000,
-		EventRetentionDays:  30,
-		EstimatedPromptUSD:  0.022,
-		EstimatedOutputUSD:  0.216,
-		EstimatedCachedUSD:  0,
+		ListenAddr:           "127.0.0.1:18080",
+		DatabasePath:         "data/adapter.db",
+		AuthTokens:           []string{"change-me-before-production"},
+		AdminToken:           "",
+		HashSalt:             generatedHashSalt(),
+		ResultScoreCategory:  "illicit",
+		ResultBlockThreshold: 0.95,
+		MaxBodyBytes:         16 << 20,
+		DirectModelAudit:     false,
+		MissSampleRate:       0.3,
+		AuditOnKeywordHit:    true,
+		MinTextChars:         1,
+		MaxTextChars:         12000,
+		ImageAuditMode:       "triggered",
+		ImageSampleRate:      0.05,
+		MaxImages:            1,
+		AllowDataURLImage:    true,
+		EventRetention:       1000,
+		EventRetentionDays:   30,
+		EstimatedPromptUSD:   0.022,
+		EstimatedOutputUSD:   0.216,
+		EstimatedCachedUSD:   0,
 		DecisionCache: CacheConfig{
 			Enabled:         true,
 			AllowTTLSeconds: 3600,
@@ -202,6 +204,12 @@ func normalizeConfig(cfg Config) (Config, error) {
 	cfg.ResultScoreCategory = normalizeCategory(strings.TrimSpace(cfg.ResultScoreCategory))
 	if cfg.ResultScoreCategory == "" {
 		cfg.ResultScoreCategory = "illicit"
+	}
+	if cfg.ResultBlockThreshold <= 0 {
+		cfg.ResultBlockThreshold = 0.95
+	}
+	if cfg.ResultBlockThreshold > 1 {
+		cfg.ResultBlockThreshold = 1
 	}
 	if cfg.EventRetention <= 0 {
 		cfg.EventRetention = 1000
@@ -363,6 +371,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v, ok := floatEnv("MISS_SAMPLE_RATE"); ok {
 		cfg.MissSampleRate = v
+	}
+	if v, ok := floatEnv("RESULT_BLOCK_THRESHOLD"); ok {
+		cfg.ResultBlockThreshold = v
 	}
 	if v, ok := boolEnv("DIRECT_MODEL_AUDIT"); ok {
 		cfg.DirectModelAudit = v

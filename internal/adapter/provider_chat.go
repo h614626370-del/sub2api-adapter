@@ -273,7 +273,7 @@ func canonicalAuditDecision(decision string, confidence float64) string {
 	case "block", "deny", "reject", "unsafe":
 		return "block"
 	default:
-		if confidence >= sub2APIBlockThreshold("illicit") {
+		if confidence >= defaultResultBlockThreshold {
 			return "block"
 		}
 		return "pass"

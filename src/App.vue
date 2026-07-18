@@ -40,7 +40,7 @@ type Config = {
   listen_addr: string; database_path: string; auth_tokens?: string[]; force_allow: boolean;
   max_body_bytes: number; direct_model_audit: boolean; miss_sample_rate: number; audit_on_keyword_hit: boolean; min_text_chars: number; max_text_chars: number;
   image_audit_mode: string; image_sample_rate: number; max_images_per_request: number; allow_data_url_image: boolean;
-  decision_cache: CacheConfig; hash_salt: string; result_score_category: string;
+  decision_cache: CacheConfig; hash_salt: string; result_score_category: string; result_block_threshold: number;
   log_raw_input: boolean; keyword_sets: KeywordSet[]; provider_label_mapping: LabelMapping[]; provider: ProviderConfig;
   image_provider_enabled: boolean; image_provider: ProviderConfig;
   event_retention: number; event_retention_days: number; estimated_prompt_price_usd_per_1m: number;
@@ -111,7 +111,7 @@ const pageIntro: Record<string, { title: string; summary: string; impact: string
   mapping: { title: 'sub2api 返回规则', summary: '把上游返回的最终 confidence 写进一个指定的 category_scores 字段，其它分类字段保持放行分数。', impact: 'sub2api 按自己的阈值读取这个指定分数字段；链路测试页会显示该分数是否达到拦截阈值。' },
   images: { title: '图片审核', summary: '控制图片 URL 或 data URL 是否参与审核，以及图片请求的抽样和数量限制。', impact: '图片审核会增加调用成本；关闭后只处理文本。' },
   cache: { title: '决策缓存', summary: '相同内容短时间内复用上一次审核结果，减少延迟和上游模型调用次数。', impact: '缓存能省成本，但 prompt 或策略变更后可以清缓存，避免旧结果继续生效。' },
-  events: { title: '事件记录', summary: '查看每次 moderation 请求的动作、关键词、上游模型、耗时和错误摘要。', impact: '这里可以手动清理日志；系统运行中会按“日志留存天数”和“最多保留条数”定时删除旧记录。' },
+  events: { title: '事件记录', summary: '集中查看阻断、故障放行和模型禁用放行，正常放行只保留汇总指标。', impact: '这里可以手动清理事件；系统运行中会按留存天数和最多保留条数定时删除旧记录。' },
   audits: { title: '配置审计', summary: '查看谁在什么时候改了配置，以及改动摘要。', impact: '用于上线后追踪策略变更，敏感密钥不会显示明文。' },
   monitor: { title: '系统监控', summary: '查看进程内存、SQLite 数据、数据卷占用、磁盘余量、事件数量和关键运行指标。', impact: '监控数据只读；Docker stdout 日志由宿主机管理，不计入 Adapter 数据卷。' },
   system: { title: '系统维护', summary: '查看版本、执行在线更新、导入导出配置，或恢复推荐默认值。', impact: '在线更新会重启 Adapter；导入和恢复默认值会覆盖当前策略，操作前要确认。' }
@@ -204,10 +204,11 @@ const m = computed(() => status.value?.metrics || {})
 const cards = computed(() => [
   ['总请求', num(m.value.moderation_requests_total), '所有进入 Adapter 的 moderation 请求'],
   ['本地放行', num(m.value.moderation_local_allow_total), '未命中关键词且未抽样'],
-  ['模型分类', num(sumPrefix('moderation_provider_calls_total')), '调用上游文本审核模型'],
+  ['上游送审', num(sumPrefix('moderation_provider_calls_total')), '实际调用文本或图片审核模型'],
   ['阻断', num(sumPrefix('moderation_flagged_total')), '综合分数字段达到阻断口径'],
   ['故障放行', num(m.value.moderation_fail_open_total), '上游模型异常后放行'],
-  ['图片请求', num(m.value.moderation_image_requests_total), '包含图片 URL 或 data URL 的请求']
+  ['图片请求', num(m.value.moderation_image_requests_total), '包含图片 URL 或 data URL 的请求'],
+  ['图片送审', num(m.value.moderation_image_audit_total), '实际调用独立图片审核模型']
 ])
 const effectiveRate = computed(() => {
   if (config.value?.direct_model_audit) return 1
@@ -284,7 +285,7 @@ function resultScoreValue(result?: AdminTestResult | null) {
   return Number(result?.result_score ?? result?.category_scores?.[category] ?? 0)
 }
 function sub2apiThreshold(result?: AdminTestResult | null) {
-  return Number(result?.sub2api_block_threshold ?? 0.95)
+  return Number(result?.sub2api_block_threshold ?? config.value?.result_block_threshold ?? 0.95)
 }
 function resultScoreParam(result: AdminTestResult | null) {
   if (!result) return `${resultScoreField(result)}=-`
@@ -351,6 +352,10 @@ function explainCategory(category?: string) {
 }
 function explainProvider(provider?: string) {
   switch (provider) {
+    case 'image_chat_json': return '图片审核模型（OpenAI 兼容）'
+    case 'image_qwen': return 'Qwen 图片审核模型'
+    case 'image_openai_compatible': return '图片审核模型（OpenAI 兼容）'
+    case 'image_http_json': return '图片审核模型（HTTP JSON）'
     case 'chat_json': return '文本审核模型（OpenAI 兼容）'
     case 'qwen': return 'Qwen 文本审核模型'
     case 'openai_compatible': return '文本审核模型（OpenAI 兼容）'
@@ -897,10 +902,10 @@ onMounted(() => {
             <small class="field-hint">仅用于上游异常或紧急排障。开启后所有审核结果都会放行。</small>
           </Field>
           <Field label="请求体上限 bytes"><input type="number" v-model.number="config.max_body_bytes" /></Field>
-          <div class="wide subsection-heading"><div><h2>事件留存</h2><p>控制事件记录的脱敏摘要和自动清理边界。</p></div></div>
+          <div class="wide subsection-heading"><div><h2>事件留存</h2><p>只持久化阻断、故障放行和模型禁用放行；正常放行仅进入运行指标。</p></div></div>
           <Field label="记录脱敏输入摘要"><input type="checkbox" v-model="config.log_raw_input" /></Field>
-          <Field label="日志最多保留条数"><input type="number" min="1" v-model.number="config.event_retention" /></Field>
-          <Field label="日志留存天数"><input type="number" min="1" max="3650" v-model.number="config.event_retention_days" /></Field>
+          <Field label="事件最多保留条数"><input type="number" min="1" v-model.number="config.event_retention" /></Field>
+          <Field label="事件留存天数"><input type="number" min="1" max="3650" v-model.number="config.event_retention_days" /></Field>
           <div class="wide subsection-heading"><div><h2>运行路径</h2><p>由部署环境决定，只读展示，不能在页面中修改。</p></div></div>
           <Field label="Adapter 监听地址"><input v-model="config.listen_addr" disabled /></Field>
           <Field label="SQLite 路径"><input v-model="config.database_path" disabled /></Field>
@@ -1177,9 +1182,9 @@ onMounted(() => {
               <small>不再按色情、暴力、网络攻击等内部分类分别写分。</small>
             </div>
             <div class="return-rule-card">
-              <b>链路测试阈值</b>
-              <span>按 sub2api 规则</span>
-              <small>例如 illicit 默认 0.95；这只用于判断展示，不改写上游分数。</small>
+              <b>sub2api 阻断阈值</b>
+              <span>{{ Number(config.result_block_threshold || 0.95).toFixed(2) }}</span>
+              <small>用于同步 sub2api 当前配置；不会反向修改 sub2api。</small>
             </div>
           </div>
 
@@ -1189,6 +1194,10 @@ onMounted(() => {
                 <option v-for="[value, label] in scoreCategoryOptions" :key="value" :value="value">{{ label }} / {{ value }}</option>
               </select>
               <small class="field-hint">建议保持 illicit；Adapter 会把上游 confidence 直接写到这个字段。</small>
+            </Field>
+            <Field label="sub2api 阻断阈值">
+              <input type="number" step="0.01" min="0.01" max="1" v-model.number="config.result_block_threshold" />
+              <small class="field-hint">必须与 sub2api 对该字段配置的阈值保持一致；用于链路测试、flagged 返回值和运行概览阻断统计。</small>
             </Field>
           </div>
 
@@ -1270,7 +1279,7 @@ onMounted(() => {
               <div><b>拦截阈值</b><span>{{ sub2apiThreshold(testResult).toFixed(2) }}</span><small>链路测试按这个值判断是否会被 sub2api pre_block 拦截</small></div>
               <div><b>是否命中关键词</b><span>{{ testResult.cache_hit ? '未重算' : (testResult.keyword_prefilter_enabled === false ? '未启用' : boolText((testResult.keyword_hits || []).length)) }}</span><small>{{ testResult.cache_hit ? '本次命中缓存，没有重新执行关键词初筛' : (testResult.keyword_prefilter_enabled === false ? '已关闭关键词预筛，本次直接进入模型调用规则' : ((testResult.keyword_hits || []).length ? '命中词：' + testResult.keyword_hits?.map((h:any)=>h.keyword).join('、') : '没有命中本地初筛词')) }}</small></div>
               <div><b>是否命中缓存</b><span>{{ boolText(testResult.cache_hit) }}</span><small>{{ testResult.cache_hit ? '复用之前的审核结果，没有重新跑完整链路' : '本次重新计算判断过程' }}</small></div>
-              <div><b>是否调用模型</b><span>{{ boolText(testResult.external_audited) }}</span><small>{{ testResult.external_audited ? '已经调用上游文本审核模型' : '未调用模型，按本地规则或缓存处理' }}</small></div>
+              <div><b>是否调用模型</b><span>{{ boolText(testResult.external_audited) }}</span><small>{{ testResult.external_audited ? '已经调用上游审核模型' : '未调用模型，按本地规则或缓存处理' }}</small></div>
               <div><b>是否抽样调用</b><span>{{ testResult.keyword_prefilter_enabled === false ? '不适用' : boolText(testResult.sampled) }}</span><small>{{ testResult.keyword_prefilter_enabled === false ? '关键词预筛关闭时不使用未命中抽样率' : '没命中关键词时，按抽样率随机调用模型；默认 0.3 表示抽 30%' }}</small></div>
               <div><b>其它分类分数</b><span>全部放行</span><small>内部分类只进摘要和日志，不再分散写入 sub2api 字段</small></div>
             </div>
@@ -1282,7 +1291,7 @@ onMounted(() => {
                   <tr><th>normalized_text</th><td>系统实际用于判断的文本，已做归一化和长度限制。</td><td>{{ testResult.normalized_text || '-' }}</td></tr>
                   <tr><th>keyword_hits</th><td>本地初筛命中的词。通常用于触发上游模型打分。</td><td>{{ testResult.keyword_prefilter_enabled === false ? '关键词预筛未启用' : ((testResult.keyword_hits || []).length ? testResult.keyword_hits?.map((h:any)=>h.keyword).join('、') : '无') }}</td></tr>
                   <tr><th>cache_hit</th><td>是否复用缓存结果。命中缓存时不会重新跑关键词和模型调用。</td><td>{{ boolText(testResult.cache_hit) }}</td></tr>
-                  <tr><th>external_audited</th><td>是否调用了上游文本审核模型。</td><td>{{ boolText(testResult.external_audited) }}</td></tr>
+                  <tr><th>external_audited</th><td>是否调用了上游文本或图片审核模型。</td><td>{{ boolText(testResult.external_audited) }}</td></tr>
                   <tr><th>provider_raw_summary</th><td>上游模型返回摘要，方便确认 JSON 分类结果。</td><td>{{ testResult.provider_raw_summary || '-' }}</td></tr>
                   <tr><th>{{ resultScoreField(testResult) }}</th><td>上游 confidence 原样写入的最终分数字段。</td><td>{{ resultScoreReadable(testResult) }}</td></tr>
                   <tr><th>sub2api threshold</th><td>链路测试按这个阈值判断是否会被 pre_block 拦截。</td><td>{{ sub2apiThreshold(testResult).toFixed(2) }}</td></tr>
@@ -1330,13 +1339,13 @@ onMounted(() => {
         <section v-if="active === 'events'" class="section">
           <div class="explain-grid">
             <div class="explain-item"><strong>动作是什么意思</strong><p>“放行”表示当前请求通过；“阻断”表示应拦截；“故障放行”表示上游模型异常时按策略先放过；“模型禁用放行”表示你关闭了模型调用。</p></div>
-            <div class="explain-item"><strong>什么时候看这里</strong><p>当你不确定某条内容为什么放过或拦截时，先按动作筛选，再看关键词、模型摘要、最高分类和错误。</p></div>
+            <div class="explain-item"><strong>什么时候看这里</strong><p>排查阻断原因、上游模型故障或模型被禁用时，先按动作筛选，再看关键词、模型摘要、最高分类和错误。</p></div>
             <div class="explain-item"><strong>阻断内容</strong><p>被阻断的请求会保存并显示归一化后的文本明文；放行请求仍只保留指纹或脱敏摘要。</p></div>
-            <div class="explain-item"><strong>日志怎么清理</strong><p>系统运行中每小时检查一次，不会因为服务刚启动就立刻清理。超过 {{ config.event_retention_days }} 天或超过 {{ config.event_retention }} 条的旧事件会被删除。</p></div>
+            <div class="explain-item"><strong>事件怎么清理</strong><p>系统运行中每分钟检查一次。超过 {{ config.event_retention_days }} 天或超过 {{ config.event_retention }} 条的旧事件会被删除。</p></div>
           </div>
           <p v-if="eventNotice" class="notice">{{ eventNotice }}</p>
           <div class="panel-row compact-row">
-            <div class="panel"><h2>当前日志</h2><strong>{{ num(status?.events?.total) }}</strong><p>最多保留 {{ num(config.event_retention) }} 条 · 留存 {{ num(config.event_retention_days) }} 天</p></div>
+            <div class="panel"><h2>已保留事件</h2><strong>{{ num(status?.events?.total) }}</strong><p>最多保留 {{ num(config.event_retention) }} 条 · 留存 {{ num(config.event_retention_days) }} 天</p></div>
             <div class="panel"><h2>最早记录</h2><p>{{ dateText(status?.events?.oldest) }}</p></div>
             <div class="panel"><h2>最新记录</h2><p>{{ dateText(status?.events?.newest) }}</p></div>
           </div>

@@ -34,7 +34,7 @@ http://127.0.0.1:18080/admin
 1. “密钥与认证”：填写 sub2api 调用密钥、风险哈希盐，以及文本和图片模型 API Key。
 2. “文本模型”：选择地域、模型名称并编辑系统提示词；每次修改都会保留可恢复的历史版本。
 3. “模型调用规则”：默认未命中抽样率为 `0.3`，即未命中关键词的内容抽样 30% 调用对话模型分类。
-4. “返回规则”：确认综合结果写入字段，默认 `category_scores.illicit`；sub2api 侧阈值也应读取同一字段。
+4. “返回规则”：确认综合结果写入字段，默认 `category_scores.illicit`，并将阻断阈值同步为 sub2api 当前使用的值。
 
 环境变量仍可作为自动化部署时的高级覆盖项，但日常运行不要求使用环境变量。
 
@@ -87,9 +87,11 @@ Provider: chat_json
 pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 -BaseUrl http://127.0.0.1:18080 -Token "<sub2api调用密钥>" -AdminPassword "<管理员密码>" -ClearCache -Assert
 ```
 
-通过标准：`/readyz` 返回 ready，五条 v2 样例全部符合预期，`sub2api_pre_block_flagged` 与期望一致，后台上线前警告为 0，成本指标不为 0。`sub2api_pre_block_flagged` 是按 sub2api 默认分类阈值重新计算的拦截结果，用来模拟 `pre_block` 模式会不会拦截。
+通过标准：`/readyz` 返回 ready，五条 v2 样例全部符合预期，`sub2api_pre_block_flagged` 与期望一致，后台上线前警告为 0，成本指标不为 0。`sub2api_pre_block_flagged` 使用后台同步的 sub2api 阻断阈值重新计算，用来模拟 `pre_block` 模式会不会拦截。
 
-Adapter 会把综合判断结果写入一个指定的 `category_scores` 字段，默认是 `illicit`；其它分类字段保持 0。运行 smoke 时，脚本会登录后台读取当前的 `result_score_category`。
+Adapter 会把综合判断结果写入一个指定的 `category_scores` 字段，默认是 `illicit`；其它分类字段保持 0。`result_block_threshold` 默认是 `0.95`，需要与 sub2api 的实际阈值保持一致。运行 smoke 时，脚本会登录后台读取当前的结果字段和同步阈值。
+
+事件记录只持久化阻断、故障放行和模型禁用放行。正常放行和缓存放行只进入运行指标，不逐条写入 SQLite；内容指纹保留在异常事件中，用于关联同一内容的重复阻断或重复故障。
 
 ## 管理后台
 

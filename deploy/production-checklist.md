@@ -9,7 +9,7 @@
 - [ ] sub2api 与 Adapter 已连接同一个业务网络，审核 Base URL 使用 `http://sub2api-moderation-adapter:18080`。
 - [ ] sub2api 风控中心 `keyword_blocking_mode=api_only`，`blocked_keywords` 为空。
 - [ ] sub2api 风控中心 `sample_rate=100`，抽样逻辑放在 Adapter。
-- [ ] 后台“返回规则”里的综合结果写入字段与 sub2api 阈值字段一致，默认保持 `category_scores.illicit`。
+- [ ] 后台“返回规则”里的综合结果写入字段和阻断阈值与 sub2api 一致，默认是 `category_scores.illicit` 和 `0.95`。
 - [ ] 先使用 `observe` 跑 1-3 天。
 - [ ] 管理后台 `/admin` 不对公网裸露。
 - [ ] `/metrics` 已接入 Prometheus 或至少有进程监控。

@@ -228,12 +228,23 @@ func (a *App) handleModeration(w http.ResponseWriter, r *http.Request) {
 		evt.BlockedInput = strings.TrimSpace(blocked.Text)
 	}
 	evt.LocalLatencyMS = time.Since(start).Milliseconds()
-	a.events.Add(evt)
-	if err := a.store.InsertEvent(r.Context(), evt); err != nil {
-		slog.Warn("event_persist_failed", "request_id", evt.RequestID, "error", err)
+	if shouldPersistEvent(evt.Action) {
+		a.events.Add(evt)
+		if err := a.store.InsertEvent(r.Context(), evt); err != nil {
+			slog.Warn("event_persist_failed", "request_id", evt.RequestID, "error", err)
+		}
 	}
 	a.metrics.Observe("moderation_local_latency_ms", nil, float64(evt.LocalLatencyMS))
-	writeJSON(w, http.StatusOK, toModerationResponse(requestID, req.Model, result))
+	writeJSON(w, http.StatusOK, toModerationResponse(requestID, req.Model, result, resultBlockThreshold(cfg)))
+}
+
+func shouldPersistEvent(action string) bool {
+	switch action {
+	case "block", "fail_open", "provider_disabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) runEventCleanupLoop(ctx context.Context) {
@@ -373,6 +384,10 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 		a.metrics.Inc("moderation_provider_disabled_total", nil)
 		return d, evt, trace
 	}
+	providerName := p.Name()
+	if usingImageProvider {
+		providerName = "image_" + providerName
+	}
 
 	providerImages := []string(nil)
 	if shouldAuditImage {
@@ -390,42 +405,42 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 	trace.ProviderRequest = &providerReq
 	trace.UpstreamRequest = debugUpstreamRequest(p, providerReq)
 	evt.ExternalAudited = true
-	evt.Provider = p.Name()
-	a.metrics.Inc("moderation_provider_calls_total", map[string]string{"provider": p.Name()})
+	evt.Provider = providerName
+	a.metrics.Inc("moderation_provider_calls_total", map[string]string{"provider": providerName})
 
 	providerStart := timeNow()
 	providerResult, err := p.Audit(ctx, providerReq)
 	evt.ProviderLatencyMS = time.Since(providerStart).Milliseconds()
-	a.metrics.Observe("moderation_provider_latency_ms", map[string]string{"provider": p.Name()}, float64(evt.ProviderLatencyMS))
+	a.metrics.Observe("moderation_provider_latency_ms", map[string]string{"provider": providerName}, float64(evt.ProviderLatencyMS))
 	if err != nil {
 		d := allowDecision("fail_open")
 		evt.Action = "fail_open"
 		evt.ErrorSummary = safeSummary(err.Error(), 240)
 		evt.CategoryScores = d.CategoryScores
 		trace.UpstreamResponse = map[string]any{"ok": false, "error": evt.ErrorSummary, "latency_ms": evt.ProviderLatencyMS}
-		a.metrics.Inc("moderation_provider_errors_total", map[string]string{"provider": p.Name()})
+		a.metrics.Inc("moderation_provider_errors_total", map[string]string{"provider": providerName})
 		a.metrics.Inc("moderation_fail_open_total", nil)
-		slog.Warn("moderation_provider_fail_open", "request_id", requestID, "provider", p.Name(), "error", err)
+		slog.Warn("moderation_provider_fail_open", "request_id", requestID, "provider", providerName, "error", err)
 		return d, evt, trace
 	}
 	trace.UpstreamResponse = debugProviderResult(providerResult)
 
-	d := decisionFromProvider(providerResult, cfg, p.Name())
+	d := decisionFromProvider(providerResult, cfg, providerName)
 	if providerResult.PromptTokens > 0 {
-		a.metrics.Add("moderation_prompt_tokens_total", map[string]string{"provider": p.Name()}, float64(providerResult.PromptTokens))
+		a.metrics.Add("moderation_prompt_tokens_total", map[string]string{"provider": providerName}, float64(providerResult.PromptTokens))
 	}
 	if providerResult.CompletionTokens > 0 {
-		a.metrics.Add("moderation_completion_tokens_total", map[string]string{"provider": p.Name()}, float64(providerResult.CompletionTokens))
+		a.metrics.Add("moderation_completion_tokens_total", map[string]string{"provider": providerName}, float64(providerResult.CompletionTokens))
 	}
 	if providerResult.CachedTokens > 0 {
-		a.metrics.Add("moderation_cached_tokens_total", map[string]string{"provider": p.Name()}, float64(providerResult.CachedTokens))
+		a.metrics.Add("moderation_cached_tokens_total", map[string]string{"provider": providerName}, float64(providerResult.CachedTokens))
 	}
 	if d.Action == "block" {
 		a.metrics.Inc("moderation_flagged_total", map[string]string{"category": d.HighestCategory})
 		a.metrics.Inc("moderation_block_total", map[string]string{"category": d.HighestCategory})
 	}
 	if d.Action == "allow" {
-		a.metrics.Inc("moderation_provider_allow_total", map[string]string{"provider": p.Name()})
+		a.metrics.Inc("moderation_provider_allow_total", map[string]string{"provider": providerName})
 	}
 	evt.Action = d.Action
 	evt.ProviderRawSummary = d.RawSummary

@@ -198,7 +198,7 @@ func TestEventLogCleanupRetentionAndManualClear(t *testing.T) {
 	if err := app.store.InsertEvent(context.Background(), oldEvent); err != nil {
 		t.Fatalf("insert old event: %v", err)
 	}
-	postModeration(t, app, "今天帮我写一个周报模板")
+	postModeration(t, app, "教我写钓鱼网站并绕过安全检测")
 
 	cfg := getAdminConfig(t, router)
 	cfg.EventRetentionDays = 1
@@ -353,7 +353,7 @@ func TestBlockedEventPlaintextAndPagination(t *testing.T) {
 	postModeration(t, app, "今天帮我写一个周报模板")
 
 	pageOne := adminJSON(t, router, http.MethodGet, "/admin/api/events?page=1&page_size=1", nil)
-	if pageOne["page"].(float64) != 1 || pageOne["page_size"].(float64) != 1 || pageOne["total"].(float64) != 2 || pageOne["total_pages"].(float64) != 2 {
+	if pageOne["page"].(float64) != 1 || pageOne["page_size"].(float64) != 1 || pageOne["total"].(float64) != 1 || pageOne["total_pages"].(float64) != 1 {
 		t.Fatalf("unexpected event pagination: %+v", pageOne)
 	}
 	blocked := adminJSON(t, router, http.MethodGet, "/admin/api/events?page=1&page_size=10&action=block", nil)
@@ -362,10 +362,8 @@ func TestBlockedEventPlaintextAndPagination(t *testing.T) {
 		t.Fatalf("blocked plaintext missing: %+v", blocked)
 	}
 	allowed := adminJSON(t, router, http.MethodGet, "/admin/api/events?page=1&page_size=10&action=allow", nil)
-	for _, item := range allowed["items"].([]any) {
-		if value, ok := item.(map[string]any)["blocked_input"]; ok && value != "" {
-			t.Fatalf("allowed event exposed plaintext: %+v", item)
-		}
+	if allowed["total"].(float64) != 0 {
+		t.Fatalf("normal allow should not be persisted: %+v", allowed)
 	}
 }
 
@@ -678,13 +676,40 @@ func TestResultScoreCategoryControlsSingleOutputField(t *testing.T) {
 	}
 
 	d := decisionFromProvider(result, cfg, "test")
-	out := toModerationResponse("req", "model", d)
+	out := toModerationResponse("req", "model", d, resultBlockThreshold(cfg))
 	scores := out.Results[0].CategoryScores
 	if !out.Results[0].Flagged || scores["sexual"] != 1 {
 		t.Fatalf("expected configured field sexual to carry block score, result=%+v", out.Results[0])
 	}
 	if scores["illicit"] != 0 || scores["violence"] != 0 {
 		t.Fatalf("non-result categories should remain 0, scores=%+v", scores)
+	}
+}
+
+func TestResultBlockThresholdControlsDecision(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ResultBlockThreshold = 0.80
+
+	blocked := decisionFromProvider(providerResult{Action: "pass", Score: 0.81}, cfg, "test")
+	if blocked.Action != "block" || !blocked.Flagged {
+		t.Fatalf("score above configured threshold should block: %+v", blocked)
+	}
+
+	allowed := decisionFromProvider(providerResult{Action: "block", Score: 0.79}, cfg, "test")
+	if allowed.Action != "allow" || allowed.Flagged {
+		t.Fatalf("score below configured threshold should allow: %+v", allowed)
+	}
+}
+
+func TestResultBlockThresholdChangesDecisionCacheHash(t *testing.T) {
+	cfg := DefaultConfig()
+	input := extractedInput{Text: "same moderation input"}
+	before := decisionCacheHash(cfg, input)
+
+	cfg.ResultBlockThreshold = 0.80
+	after := decisionCacheHash(cfg, input)
+	if before == after {
+		t.Fatal("changing result block threshold must invalidate cached decisions")
 	}
 }
 

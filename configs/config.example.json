@@ -15,6 +15,7 @@
   "allow_data_url_image": true,
   "hash_salt": "replace-with-random-hash-salt",
   "result_score_category": "illicit",
+  "result_block_threshold": 0.95,
   "log_raw_input": false,
   "event_retention": 1000,
   "event_retention_days": 30,

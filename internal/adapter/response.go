@@ -1,5 +1,7 @@
 package adapter
 
+const defaultResultBlockThreshold = 0.95
+
 func allowDecision(provider string) decision {
 	return decision{
 		Action:         "allow",
@@ -24,7 +26,7 @@ func decisionFromProvider(result providerResult, cfg Config, providerName string
 		score = 1
 	}
 	scores[resultCategory] = score
-	flagged := score >= sub2APIBlockThreshold(resultCategory)
+	flagged := score >= resultBlockThreshold(cfg)
 	if flagged {
 		action = "block"
 	} else {
@@ -42,13 +44,13 @@ func decisionFromProvider(result providerResult, cfg Config, providerName string
 	}
 }
 
-func toModerationResponse(id string, model string, d decision) moderationResponse {
+func toModerationResponse(id string, model string, d decision, threshold float64) moderationResponse {
 	scores := completeScores(d.CategoryScores)
 	categories := make(map[string]bool, len(scores))
 	for _, category := range moderationCategories {
-		categories[category] = scores[category] >= sub2APIBlockThreshold(category)
+		categories[category] = scores[category] >= threshold
 	}
-	flagged := wouldBlockSub2API(scores)
+	flagged := wouldBlockSub2API(scores, threshold)
 	return moderationResponse{
 		ID:    id,
 		Model: model,
@@ -60,24 +62,16 @@ func toModerationResponse(id string, model string, d decision) moderationRespons
 	}
 }
 
-func sub2APIBlockThreshold(category string) float64 {
-	switch normalizeCategory(category) {
-	case "harassment":
-		return 0.98
-	case "harassment/threatening", "sexual", "sexual/minors", "violence", "violence/graphic":
-		return 0.90
-	case "hate", "hate/threatening", "self-harm", "self-harm/intent", "self-harm/instructions":
-		return 0.65
-	case "illicit", "illicit/violent":
-		return 0.95
-	default:
-		return 1
+func resultBlockThreshold(cfg Config) float64 {
+	if cfg.ResultBlockThreshold <= 0 {
+		return defaultResultBlockThreshold
 	}
+	return clamp01(cfg.ResultBlockThreshold)
 }
 
-func wouldBlockSub2API(scores map[string]float64) bool {
+func wouldBlockSub2API(scores map[string]float64, threshold float64) bool {
 	for _, category := range moderationCategories {
-		if scores[category] >= sub2APIBlockThreshold(category) {
+		if scores[category] >= threshold {
 			return true
 		}
 	}

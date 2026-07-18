@@ -534,6 +534,9 @@ func mergePersistedConfig(base Config, persisted Config) Config {
 	if os.Getenv("MISS_SAMPLE_RATE") != "" {
 		persisted.MissSampleRate = base.MissSampleRate
 	}
+	if os.Getenv("RESULT_BLOCK_THRESHOLD") != "" {
+		persisted.ResultBlockThreshold = base.ResultBlockThreshold
+	}
 	if os.Getenv("DIRECT_MODEL_AUDIT") != "" {
 		persisted.DirectModelAudit = base.DirectModelAudit
 	}
@@ -758,9 +761,10 @@ func dedupeStrings(in []string) []string {
 }
 
 func configSummary(before Config, after Config) string {
-	return fmt.Sprintf("provider %s->%s, prompt_template %s->%s, result_score_category %s->%s, force_allow %t->%t, direct_model_audit %t->%t, image_provider %t/%s/highres=%t->%t/%s/highres=%t, miss_sample_rate %.4f->%.4f, keyword_sets %d->%d",
+	return fmt.Sprintf("provider %s->%s, prompt_template %s->%s, result_score_category %s->%s, result_block_threshold %.4f->%.4f, force_allow %t->%t, direct_model_audit %t->%t, image_provider %t/%s/highres=%t->%t/%s/highres=%t, miss_sample_rate %.4f->%.4f, keyword_sets %d->%d",
 		before.Provider.Type, after.Provider.Type, before.Provider.ActivePromptID, after.Provider.ActivePromptID,
-		before.ResultScoreCategory, after.ResultScoreCategory, before.ForceAllow, after.ForceAllow,
+		before.ResultScoreCategory, after.ResultScoreCategory, before.ResultBlockThreshold, after.ResultBlockThreshold,
+		before.ForceAllow, after.ForceAllow,
 		before.DirectModelAudit, after.DirectModelAudit, before.ImageProviderEnabled, before.ImageProvider.Model,
 		before.ImageProvider.HighResolution, after.ImageProviderEnabled, after.ImageProvider.Model,
 		after.ImageProvider.HighResolution, before.MissSampleRate, after.MissSampleRate, len(before.KeywordSets), len(after.KeywordSets))

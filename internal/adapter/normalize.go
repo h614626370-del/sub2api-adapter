@@ -231,6 +231,7 @@ func policyFingerprint(cfg Config) string {
 		MaxImages               int            `json:"max_images_per_request"`
 		AllowDataURLImage       bool           `json:"allow_data_url_image"`
 		ResultScoreCategory     string         `json:"result_score_category"`
+		ResultBlockThreshold    float64        `json:"result_block_threshold"`
 		KeywordSets             []KeywordSet   `json:"keyword_sets"`
 		LabelMappings           []LabelMapping `json:"provider_label_mapping"`
 	}{
@@ -269,6 +270,7 @@ func policyFingerprint(cfg Config) string {
 		MaxImages:               cfg.MaxImages,
 		AllowDataURLImage:       cfg.AllowDataURLImage,
 		ResultScoreCategory:     cfg.ResultScoreCategory,
+		ResultBlockThreshold:    cfg.ResultBlockThreshold,
 		KeywordSets:             cfg.KeywordSets,
 		LabelMappings:           cfg.LabelMappings,
 	}

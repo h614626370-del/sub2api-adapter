@@ -45,6 +45,13 @@ func TestModerationLocalAllow(t *testing.T) {
 	if out.Results[0].CategoryScores["illicit"] != 0 {
 		t.Fatalf("illicit score=%v", out.Results[0].CategoryScores["illicit"])
 	}
+	stats, err := app.store.EventStats(context.Background())
+	if err != nil {
+		t.Fatalf("event stats: %v", err)
+	}
+	if stats.Total != 0 {
+		t.Fatalf("normal allow should not be persisted, event total=%d", stats.Total)
+	}
 }
 
 func TestDirectModelAuditBypassesKeywordSampling(t *testing.T) {
@@ -87,6 +94,28 @@ func TestProviderBlockMapsToIllicitScore(t *testing.T) {
 	}
 	if out.Results[0].CategoryScores["illicit"] != 1 {
 		t.Fatalf("illicit score=%v want 1", out.Results[0].CategoryScores["illicit"])
+	}
+	events, total, err := app.store.ListEvents(context.Background(), 10, 0, "", "")
+	if err != nil || total != 1 || len(events) != 1 {
+		t.Fatalf("list block event: total=%d events=%d err=%v", total, len(events), err)
+	}
+	if events[0].Action != "block" || events[0].InputHash == "" {
+		t.Fatalf("unexpected block event: %+v", events[0])
+	}
+}
+
+func TestEventPersistencePolicy(t *testing.T) {
+	tests := map[string]bool{
+		"block":             true,
+		"fail_open":         true,
+		"provider_disabled": true,
+		"allow":             false,
+		"force_allow":       false,
+	}
+	for action, want := range tests {
+		if got := shouldPersistEvent(action); got != want {
+			t.Fatalf("shouldPersistEvent(%q)=%t want %t", action, got, want)
+		}
 	}
 }
 
@@ -151,6 +180,13 @@ func TestImageProviderUsedForImageAudit(t *testing.T) {
 	}
 	if imageProviderCalls != 1 || textProviderCalls != 0 {
 		t.Fatalf("provider calls text=%d image=%d", textProviderCalls, imageProviderCalls)
+	}
+	events, total, err := app.store.ListEvents(context.Background(), 10, 0, "", "")
+	if err != nil || total != 1 || len(events) != 1 {
+		t.Fatalf("list image audit event: total=%d events=%d err=%v", total, len(events), err)
+	}
+	if events[0].Provider != "image_http_json" {
+		t.Fatalf("image audit event provider=%q want image_http_json", events[0].Provider)
 	}
 }
 

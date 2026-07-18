@@ -234,14 +234,14 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 	if trace.CacheNote != "" {
 		upstreamNote = trace.CacheNote
 	}
-	finalResponse := toModerationResponse(requestID, req.Model, d)
 	cfg := a.currentConfig()
+	finalResponse := toModerationResponse(requestID, req.Model, d, resultBlockThreshold(cfg))
 	resultCategory := cfg.ResultScoreCategory
 	resultScore := d.CategoryScores[resultCategory]
-	blockThreshold := sub2APIBlockThreshold(resultCategory)
-	wouldBlock := wouldBlockSub2API(d.CategoryScores)
+	blockThreshold := resultBlockThreshold(cfg)
+	wouldBlock := wouldBlockSub2API(d.CategoryScores, blockThreshold)
 	if len(finalResponse.Results) > 0 {
-		wouldBlock = wouldBlockSub2API(finalResponse.Results[0].CategoryScores)
+		wouldBlock = wouldBlockSub2API(finalResponse.Results[0].CategoryScores, blockThreshold)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"request_id":                requestID,
@@ -523,6 +523,7 @@ func requiresRiskConfirmation(before Config, after Config) bool {
 	return before.ForceAllow != after.ForceAllow ||
 		before.Provider.Disabled != after.Provider.Disabled ||
 		before.ResultScoreCategory != after.ResultScoreCategory ||
+		before.ResultBlockThreshold != after.ResultBlockThreshold ||
 		before.DirectModelAudit != after.DirectModelAudit ||
 		before.ImageProviderEnabled != after.ImageProviderEnabled ||
 		before.ImageProvider.Model != after.ImageProvider.Model ||
