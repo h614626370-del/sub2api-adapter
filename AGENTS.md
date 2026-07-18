@@ -185,7 +185,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
 标准发布命令：
 
 ```powershell
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.8
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.9
 ```
 
 发布脚本应同时推送：
@@ -195,12 +195,12 @@ pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.8
 
 当前正式发布（2026-07-18）：
 
-- 版本：`0.0.8`
-- Git 提交：`f22169fa210c`
-- Docker Hub 摘要：`sha256:eefbba75ce6eb0e2a395af0f8b8810d32171214993fa24e2bacff7785e638410`
-- `0.0.8` 与 `latest` 指向同一摘要。
-- GitHub Release：`https://github.com/h614626370-del/sub2api-adapter/releases/tag/v0.0.8`
-- 发布前已通过 `go test`、`go vet`、前端构建、npm audit、仓库秘密扫描和最终镜像启动验证；本轮环境没有可用的 CGO/Linux Go、staticcheck、govulncheck、ShellCheck 和 Trivy，因此没有重复执行这些检查，上一版 `0.0.7` 已完整通过。
+- 版本：`0.0.9`
+- Git 提交：`e5494fe64cb2`
+- Docker Hub 摘要：`sha256:c731b03f22d6496fd9cad81701694102ca02ab80c527771688fad0d401303fbb`
+- `0.0.9` 与 `latest` 指向同一摘要。
+- GitHub Release：`https://github.com/h614626370-del/sub2api-adapter/releases/tag/v0.0.9`
+- 发布前已通过 `go test`、`go vet`、前端构建、npm audit、暂存差异秘密扫描、桌面与 `390x844` 页面验收和最终镜像启动验证。
 
 当前 Windows 主机没有直接可用的 `docker` 命令时，使用 Ubuntu WSL 中的 Docker。WSL 已登录正确的 Docker Hub 账号，且已有 `614626370/kkflow-guide-api` 发布记录。虚拟机中的 Docker 登录不是该发布账号，不要从虚拟机执行 push，也不要读取或复制 Docker 凭据。
 
