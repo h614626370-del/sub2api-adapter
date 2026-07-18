@@ -9,7 +9,7 @@ Adapter 本机部署时建议：
 | Base URL | `http://127.0.0.1:18080` |
 | Model | `llm-audit-adapter-v1`，或任意占位模型名 |
 | API Key | 后台“密钥与认证”页面里的 sub2api 调用密钥 |
-| Timeout | `2500-3500ms` |
+| Timeout | `3500ms`（必须大于 Adapter 的模型超时） |
 | Retry Count | `0` 或 `1` |
 | Sample Rate | `100` |
 | Keyword Mode | `api_only` |

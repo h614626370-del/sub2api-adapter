@@ -76,10 +76,13 @@
 - `image_audit_mode=triggered`：文本直接送审、关键词命中或文本抽样命中时审核图片；其余带图请求再按 `image_sample_rate` 补充抽样。
 - `image_audit_mode=off`：不审核图片。
 - 图片高清模式只影响视觉模型请求；适合小字、截图和二维码，但会增加成本与延迟。
+- 图片模型运行时始终复用当前文本系统提示词，页面只维护一套审核口径。
 
 ### 3.4 提示词与事件
 
 - 页面只维护一套当前系统提示词和一段说明，不提供多模板切换。
+- 当前提示词覆盖 cyber abuse、露骨色情、成人深伪、dox 和对真实他人的暴力威胁；医学解剖与中性健康教育放行。
+- 文本 Few-shot 默认开启，示例必须与当前提示词口径一致；不得使用“出现性器官即高分”这类缺少用途和上下文的宽泛示例。
 - 每次保存提示词修改前，旧内容自动进入 `prompt_versions`。
 - 恢复历史版本时，恢复前的当前内容也必须先归档。
 - 事件页只持久化阻断、故障放行和模型禁用放行；正常放行和缓存放行只进入运行指标，不保存逐条事件。
@@ -95,12 +98,15 @@
 - sub2api 阻断阈值同步值：`0.95`。
 - 未命中抽样率：`0.3`。
 - 独立图片模型：默认开启。
-- 图片策略：默认 `triggered`。
+- 图片策略：默认 `all`。
 - 图片补充抽样率：默认 `0.05`。
-- 文本模型：`qwen-flash`。
-- 图片模型：`qwen3-vl-flash`。
+- 最大图片数：默认 `2`。
+- 阿里 Base URL：默认美国弗吉尼亚 `https://dashscope-us.aliyuncs.com/compatible-mode/v1`。
+- 文本模型：默认 `qwen3.6-flash-us`，`max_tokens=128`，超时 `2000ms`，Few-shot 开启。
+- 图片模型：默认 `qwen3-vl-flash-us`，`max_tokens=128`，超时 `3000ms`，高清模式关闭。
 - 联网搜索：文本和图片模型均默认关闭。
 - 决策缓存：默认开启。
+- 放行缓存默认 1 小时；阻断缓存默认 1 天。
 - 内存决策缓存最多 10000 条；SQLite 决策缓存同样按 10000 条清理，后台维护循环每分钟清理过期缓存和超量事件。
 - 事件最多保留 1000 条，默认保留 30 天。
 
@@ -179,7 +185,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
 标准发布命令：
 
 ```powershell
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.7
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.8
 ```
 
 发布脚本应同时推送：

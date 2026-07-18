@@ -143,6 +143,8 @@ p { color: var(--muted); margin: 0; line-height: 1.55; text-wrap: pretty; }
 .parameter-grid { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 16px 20px; align-items: start; min-width: 0; }
 .field { display: grid; gap: 7px; color: var(--ink); font-size: .85rem; font-weight: 680; min-width: 0; }
 .field-hint { color: var(--muted); font-size: .78rem; font-weight: 500; line-height: 1.45; }
+.model-guidance { display: grid; gap: 2px; color: var(--muted); font-size: .78rem; font-weight: 500; line-height: 1.45; }
+.model-guidance strong { color: var(--accent); font-size: .76rem; font-weight: 780; }
 .input-with-action { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 8px; }
 input, textarea, select { width: 100%; border: 1px solid var(--line-strong); border-radius: 6px; min-height: 40px; padding: 9px 10px; background: var(--surface); color: var(--ink); }
 input::placeholder, textarea::placeholder { color: oklch(0.48 0.018 250); }

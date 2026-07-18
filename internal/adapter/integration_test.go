@@ -78,6 +78,40 @@ func TestOperationalDefaults(t *testing.T) {
 	if cfg.Provider.EnableSearch || cfg.ImageProvider.EnableSearch {
 		t.Fatalf("online search should be disabled by default")
 	}
+	if cfg.Provider.Endpoint != "https://dashscope-us.aliyuncs.com/compatible-mode/v1" || cfg.Provider.Model != "qwen3.6-flash-us" {
+		t.Fatalf("unexpected text provider defaults: %+v", cfg.Provider)
+	}
+	if cfg.ImageProvider.Endpoint != "https://dashscope-us.aliyuncs.com/compatible-mode/v1" || cfg.ImageProvider.Model != "qwen3-vl-flash-us" {
+		t.Fatalf("unexpected image provider defaults: %+v", cfg.ImageProvider)
+	}
+	if !cfg.Provider.EnableFewShot || cfg.Provider.MaxTokens != 128 || cfg.Provider.TimeoutMS != 2000 {
+		t.Fatalf("unexpected text inference defaults: %+v", cfg.Provider)
+	}
+	if cfg.ImageProvider.MaxTokens != 128 || cfg.ImageProvider.TimeoutMS != 3000 || cfg.ImageProvider.HighResolution {
+		t.Fatalf("unexpected image inference defaults: %+v", cfg.ImageProvider)
+	}
+	if cfg.ImageAuditMode != "all" || cfg.MaxImages != 2 {
+		t.Fatalf("unexpected image audit defaults: mode=%s max_images=%d", cfg.ImageAuditMode, cfg.MaxImages)
+	}
+	if cfg.DecisionCache.BlockTTLSeconds != 86400 {
+		t.Fatalf("block cache ttl=%d want 86400", cfg.DecisionCache.BlockTTLSeconds)
+	}
+	if !strings.Contains(activeSystemPrompt(cfg.Provider), "露骨色情内容") || !strings.Contains(activeSystemPrompt(cfg.Provider), "中文、英文以外") {
+		t.Fatal("default system prompt is missing the explicit-content or multilingual policy")
+	}
+}
+
+func TestImageProviderAlwaysUsesCurrentTextPrompt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.PromptTemplates[0].SystemPrompt = "current shared prompt"
+	cfg.ImageProvider.SystemPrompt = "stale image prompt"
+	cfg.ImageProvider.PromptTemplates = []PromptTemplate{{ID: "stale", SystemPrompt: "stale image template"}}
+	cfg.ImageProvider.ActivePromptID = "stale"
+
+	effective := effectiveImageProviderConfig(cfg)
+	if got := activeSystemPrompt(effective); got != "current shared prompt" {
+		t.Fatalf("image provider prompt=%q want current text prompt", got)
+	}
 }
 
 func TestAdminLoginSessionCookieSupportsRefreshAndLogout(t *testing.T) {

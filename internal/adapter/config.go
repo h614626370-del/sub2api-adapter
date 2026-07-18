@@ -115,24 +115,24 @@ func DefaultConfig() Config {
 		AuditOnKeywordHit:    true,
 		MinTextChars:         1,
 		MaxTextChars:         12000,
-		ImageAuditMode:       "triggered",
+		ImageAuditMode:       "all",
 		ImageSampleRate:      0.05,
-		MaxImages:            1,
+		MaxImages:            2,
 		AllowDataURLImage:    true,
 		EventRetention:       1000,
 		EventRetentionDays:   30,
-		EstimatedPromptUSD:   0.022,
-		EstimatedOutputUSD:   0.216,
+		EstimatedPromptUSD:   0.25,
+		EstimatedOutputUSD:   1.5,
 		EstimatedCachedUSD:   0,
 		DecisionCache: CacheConfig{
 			Enabled:         true,
 			AllowTTLSeconds: 3600,
-			BlockTTLSeconds: 2592000,
+			BlockTTLSeconds: 86400,
 		},
 		Provider: ProviderConfig{
 			Type:            "chat_json",
-			Endpoint:        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			Model:           "qwen-flash",
+			Endpoint:        "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+			Model:           "qwen3.6-flash-us",
 			SystemPrompt:    defaultAuditSystemPrompt(),
 			ActivePromptID:  "default-cyber",
 			PromptTemplates: defaultPromptTemplates(defaultAuditSystemPrompt()),
@@ -140,23 +140,23 @@ func DefaultConfig() Config {
 			WrapUserInput:   true,
 			Temperature:     0,
 			TopP:            1,
-			MaxTokens:       300,
+			MaxTokens:       128,
 			ThinkingBudget:  1,
-			TimeoutMS:       2500,
+			TimeoutMS:       2000,
 		},
 		ImageProviderEnabled: true,
 		ImageProvider: ProviderConfig{
 			Type:           "chat_json",
-			Endpoint:       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			Model:          "qwen3-vl-flash",
+			Endpoint:       "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+			Model:          "qwen3-vl-flash-us",
 			SystemPrompt:   defaultAuditSystemPrompt(),
 			EnableFewShot:  false,
 			WrapUserInput:  true,
 			Temperature:    0,
 			TopP:           1,
-			MaxTokens:      300,
+			MaxTokens:      128,
 			ThinkingBudget: 1,
-			TimeoutMS:      3500,
+			TimeoutMS:      3000,
 		},
 		KeywordSets:   defaultKeywordSets(),
 		LabelMappings: defaultLabelMappings(),
@@ -196,7 +196,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 		cfg.MinTextChars = 0
 	}
 	if cfg.MaxImages <= 0 {
-		cfg.MaxImages = 1
+		cfg.MaxImages = 2
 	}
 	if cfg.MaxImages > 8 {
 		cfg.MaxImages = 8
@@ -230,13 +230,13 @@ func normalizeConfig(cfg Config) (Config, error) {
 		cfg.DatabasePath = "data/adapter.db"
 	}
 	if cfg.Provider.TimeoutMS <= 0 {
-		cfg.Provider.TimeoutMS = 2500
+		cfg.Provider.TimeoutMS = 2000
 	}
 	if cfg.Provider.TimeoutMS > 30000 {
 		cfg.Provider.TimeoutMS = 30000
 	}
 	if cfg.Provider.Model == "" {
-		cfg.Provider.Model = "qwen-flash"
+		cfg.Provider.Model = "qwen3.6-flash-us"
 	}
 	if cfg.Provider.SystemPrompt == "" {
 		cfg.Provider.SystemPrompt = defaultAuditSystemPrompt()
@@ -259,7 +259,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 		cfg.Provider.Temperature = 0
 	}
 	if cfg.Provider.MaxTokens <= 0 {
-		cfg.Provider.MaxTokens = 300
+		cfg.Provider.MaxTokens = 128
 	}
 	if cfg.Provider.MaxTokens > 4096 {
 		cfg.Provider.MaxTokens = 4096
@@ -271,7 +271,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 	switch cfg.ImageAuditMode {
 	case "off", "triggered", "sampled", "all":
 	default:
-		cfg.ImageAuditMode = "triggered"
+		cfg.ImageAuditMode = "all"
 	}
 	if cfg.DecisionCache.AllowTTLSeconds <= 0 {
 		cfg.DecisionCache.AllowTTLSeconds = 3600
@@ -280,7 +280,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 		cfg.DecisionCache.AllowTTLSeconds = 86400
 	}
 	if cfg.DecisionCache.BlockTTLSeconds <= 0 {
-		cfg.DecisionCache.BlockTTLSeconds = 2592000
+		cfg.DecisionCache.BlockTTLSeconds = 86400
 	}
 	if cfg.DecisionCache.BlockTTLSeconds > 7776000 {
 		cfg.DecisionCache.BlockTTLSeconds = 7776000
@@ -492,14 +492,14 @@ func defaultPromptTemplates(systemPrompt string) []PromptTemplate {
 	return []PromptTemplate{
 		{
 			ID:           "default-cyber",
-			Name:         "默认网络安全审核",
-			Description:  "适合日常上线测试：自有资产防御放行，明确攻击他人或露骨性内容生成阻断。",
+			Name:         "默认综合内容审核",
+			Description:  "自有资产操作放行；明确攻击他人、露骨色情、成人深伪、dox 和真实暴力威胁给高分。",
 			SystemPrompt: systemPrompt,
 		},
 		{
 			ID:          "conservative-allow",
 			Name:        "保守放行模板",
-			Description: "适合刚接入时降低误杀：只有明确攻击他人、绕过授权或露骨性内容生成才给高分。",
+			Description: "适合刚接入时降低误杀：只有明确攻击他人、绕过授权或露骨色情等职责内风险才给高分。",
 			SystemPrompt: defaultAuditSystemPrompt() + `
 
 保守放行补充：
@@ -563,10 +563,10 @@ func normalizeImageProviderConfig(image ProviderConfig, text ProviderConfig) Pro
 		image.Endpoint = strings.TrimSpace(text.Endpoint)
 	}
 	if strings.TrimSpace(image.Endpoint) == "" {
-		image.Endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		image.Endpoint = "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
 	}
 	if strings.TrimSpace(image.Model) == "" {
-		image.Model = "qwen3-vl-flash"
+		image.Model = "qwen3-vl-flash-us"
 	}
 	if strings.TrimSpace(image.SystemPrompt) == "" {
 		image.SystemPrompt = activeSystemPrompt(text)
@@ -578,7 +578,7 @@ func normalizeImageProviderConfig(image ProviderConfig, text ProviderConfig) Pro
 		image.Temperature = 0
 	}
 	if image.MaxTokens <= 0 {
-		image.MaxTokens = 300
+		image.MaxTokens = 128
 	}
 	if image.MaxTokens > 4096 {
 		image.MaxTokens = 4096
@@ -587,7 +587,7 @@ func normalizeImageProviderConfig(image ProviderConfig, text ProviderConfig) Pro
 		image.ThinkingBudget = 1
 	}
 	if image.TimeoutMS <= 0 {
-		image.TimeoutMS = 3500
+		image.TimeoutMS = 3000
 	}
 	if image.TimeoutMS > 30000 {
 		image.TimeoutMS = 30000
@@ -598,6 +598,9 @@ func normalizeImageProviderConfig(image ProviderConfig, text ProviderConfig) Pro
 
 func effectiveImageProviderConfig(cfg Config) ProviderConfig {
 	image := cfg.ImageProvider
+	image.SystemPrompt = activeSystemPrompt(cfg.Provider)
+	image.ActivePromptID = ""
+	image.PromptTemplates = nil
 	if strings.TrimSpace(image.APIKey) == "" {
 		image.APIKey = cfg.Provider.APIKey
 	}

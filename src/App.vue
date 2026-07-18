@@ -85,12 +85,12 @@ const adapterTokenInput = ref('')
 const hashSaltInput = ref('')
 const providerApiKeyInput = ref('')
 const imageProviderApiKeyInput = ref('')
-const providerEndpointPreset = ref('cn-beijing-shared')
+const providerEndpointPreset = ref('us-east-1-shared')
 const providerWorkspaceId = ref('')
-const imageEndpointPreset = ref('cn-beijing-shared')
+const imageEndpointPreset = ref('us-east-1-shared')
 const imageWorkspaceId = ref('')
-const providerModelPreset = ref('qwen-flash')
-const imageModelPreset = ref('qwen3-vl-flash')
+const providerModelPreset = ref('qwen3.6-flash-us')
+const imageModelPreset = ref('qwen3-vl-flash-us')
 const savedConfigSnapshot = ref('')
 
 const navGroups = [
@@ -143,19 +143,33 @@ const imageAuditOptions = [
   ['all', '所有图片都审核']
 ] as const
 const customModelPreset = '__custom__'
-const aliTextModelOptions = [
-  ['qwen-flash', 'Qwen Flash / qwen-flash'],
-  ['qwen-plus', 'Qwen Plus / qwen-plus'],
-  ['qwen-max', 'Qwen Max / qwen-max'],
-  ['qwen-turbo', 'Qwen Turbo / qwen-turbo'],
-  ['qwen-flash-us', 'Qwen Flash 美国区 / qwen-flash-us']
-] as const
-const aliImageModelOptions = [
-  ['qwen3-vl-flash', 'Qwen3-VL Flash / qwen3-vl-flash'],
-  ['qwen3-vl-plus', 'Qwen3-VL Plus / qwen3-vl-plus'],
-  ['qwen-vl-plus', 'Qwen-VL Plus / qwen-vl-plus'],
-  ['qwen-vl-max', 'Qwen-VL Max / qwen-vl-max']
-] as const
+type AliModelOption = { value: string; label: string; group: string; tier: string; description: string }
+const modelOptionGroups = ['美国区推荐', '全球调度', '兼容旧模型'] as const
+const aliTextModelOptions: AliModelOption[] = [
+  { value: 'qwen3.6-flash-us', label: 'Qwen3.6 Flash US（推荐）', group: '美国区推荐', tier: '洛杉矶生产首选', description: '美国境内推理；新一代 Flash，在多语言理解、延迟和成本之间更均衡。' },
+  { value: 'qwen3.7-plus-us', label: 'Qwen3.7 Plus US', group: '美国区推荐', tier: '准确率优先', description: '美国境内推理；复杂语义和少数语言更稳，但延迟与费用高于 Flash。' },
+  { value: 'qwen-flash-us', label: 'Qwen Flash US', group: '美国区推荐', tier: '最低成本', description: '美国境内推理；速度快、价格低，模型较旧，少数语言误判风险相对更高。' },
+  { value: 'qwen-plus-us', label: 'Qwen Plus US', group: '美国区推荐', tier: '稳定兼容', description: '美国境内推理；旧一代 Plus，适合已有验证数据的兼容场景。' },
+  { value: 'qwen3.7-max-us', label: 'Qwen3.7 Max US', group: '美国区推荐', tier: '最高能力', description: '美国境内推理；能力最强，但审核 JSON 场景通常不值得承担额外延迟和费用。' },
+  { value: 'qwen3.6-flash', label: 'Qwen3.6 Flash（Global）', group: '全球调度', tier: '全球 Flash', description: '由全球资源池调度；不保证推理留在美国，延迟和数据路径可能波动。' },
+  { value: 'qwen3.7-plus', label: 'Qwen3.7 Plus（Global）', group: '全球调度', tier: '全球 Plus', description: '能力较强但由全球资源池调度；美国生产环境优先选择带 -us 的版本。' },
+  { value: 'qwen-flash', label: 'Qwen Flash（Global）', group: '兼容旧模型', tier: '旧版 Flash', description: '保留给现有配置；新部署建议改用 qwen3.6-flash-us。' },
+  { value: 'qwen-plus', label: 'Qwen Plus（Global）', group: '兼容旧模型', tier: '旧版 Plus', description: '保留给现有配置；美国部署建议改用 qwen3.7-plus-us。' },
+  { value: 'qwen-max', label: 'Qwen Max（Global）', group: '兼容旧模型', tier: '旧版 Max', description: '成本和延迟较高，仅用于已有兼容需求。' },
+  { value: 'qwen-turbo', label: 'Qwen Turbo（旧版）', group: '兼容旧模型', tier: '历史兼容', description: '历史模型，不建议用于新的审核部署。' }
+]
+const aliImageModelOptions: AliModelOption[] = [
+  { value: 'qwen3-vl-flash-us', label: 'Qwen3-VL Flash US（推荐）', group: '美国区推荐', tier: '洛杉矶生产首选', description: '美国境内视觉推理；适合常规色情、暴力、深伪和截图内容审核。' },
+  { value: 'qwen3-vl-flash', label: 'Qwen3-VL Flash（Global）', group: '全球调度', tier: '全球低成本', description: '由全球资源池调度；价格低，但美国服务器的延迟和数据路径不固定。' },
+  { value: 'qwen3-vl-plus', label: 'Qwen3-VL Plus（Global）', group: '全球调度', tier: '视觉准确率优先', description: '复杂图片理解更强，但当前没有推荐的美国专用别名，延迟与费用更高。' },
+  { value: 'qwen-vl-plus', label: 'Qwen-VL Plus（旧版）', group: '兼容旧模型', tier: '历史兼容', description: '保留给现有配置；新部署使用 Qwen3-VL。' },
+  { value: 'qwen-vl-max', label: 'Qwen-VL Max（旧版）', group: '兼容旧模型', tier: '历史兼容', description: '保留给现有配置；新部署不建议选择。' }
+]
+const providerModelInfo = computed(() => aliTextModelOptions.find(option => option.value === providerModelPreset.value))
+const imageModelInfo = computed(() => aliImageModelOptions.find(option => option.value === imageModelPreset.value))
+function modelOptionsInGroup(options: AliModelOption[], group: string) {
+  return options.filter(option => option.group === group)
+}
 type AliEndpointOption = { id: string; label: string; region: string; workspace: boolean; endpoint?: string }
 const aliEndpointOptions: AliEndpointOption[] = [
   { id: 'cn-beijing-shared', label: '华北 2（北京）共享域名', region: 'cn-beijing', workspace: false, endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
@@ -164,7 +178,7 @@ const aliEndpointOptions: AliEndpointOption[] = [
   { id: 'ap-southeast-1-workspace', label: '新加坡 Workspace 专属域名', region: 'ap-southeast-1', workspace: true },
   { id: 'cn-hongkong-shared', label: '中国香港共享域名', region: 'cn-hongkong', workspace: false, endpoint: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1' },
   { id: 'cn-hongkong-workspace', label: '中国香港 Workspace 专属域名', region: 'cn-hongkong', workspace: true },
-  { id: 'us-east-1-shared', label: '美国（弗吉尼亚，美国服务器推荐）共享域名', region: 'us-east-1', workspace: false, endpoint: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1' },
+  { id: 'us-east-1-shared', label: '美国（弗吉尼亚，洛杉矶服务器推荐）共享域名', region: 'us-east-1', workspace: false, endpoint: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1' },
   { id: 'eu-central-1-workspace', label: '德国（法兰克福）Workspace 专属域名', region: 'eu-central-1', workspace: true },
   { id: 'ap-northeast-1-workspace', label: '日本（东京）Workspace 专属域名', region: 'ap-northeast-1', workspace: true },
   { id: 'custom', label: '自定义 Base URL', region: '', workspace: false }
@@ -390,7 +404,7 @@ function endpointHint(id: string) {
   const option = aliEndpointOption(id)
   if (option.id === 'custom') return '手动填写完整 Base URL。'
   if (option.workspace) return `会生成 https://{WorkspaceId}.${option.region}.maas.aliyuncs.com/compatible-mode/v1`
-  return option.id === 'us-east-1-shared' ? '美国弗吉尼亚共享域名，不需要 WorkspaceId。' : '共享域名，不需要 WorkspaceId。'
+  return option.id === 'us-east-1-shared' ? '美国弗吉尼亚入口，不需要 WorkspaceId；选择带 -us 的模型可将推理限制在美国。' : '共享域名，不需要 WorkspaceId。'
 }
 function buildAliEndpoint(preset: string, workspaceID: string) {
   const option = aliEndpointOption(preset)
@@ -410,8 +424,8 @@ function detectAliEndpoint(endpoint: string) {
   if (matched) return { preset: matched.id, workspace: '' }
   return { preset: 'custom', workspace: '' }
 }
-function detectModelPreset(model: string, options: readonly (readonly [string, string])[]) {
-  return options.some(([value]) => value === model) ? model : customModelPreset
+function detectModelPreset(model: string, options: AliModelOption[]) {
+  return options.some(option => option.value === model) ? model : customModelPreset
 }
 function syncEndpointControlsFromConfig() {
   if (!config.value) return
@@ -437,7 +451,7 @@ function applyImageEndpointPreset() {
 function applyProviderModelPreset() {
   if (!config.value) return
   if (providerModelPreset.value === customModelPreset) {
-    if (aliTextModelOptions.some(([value]) => value === config.value?.provider.model)) config.value.provider.model = ''
+    if (aliTextModelOptions.some(option => option.value === config.value?.provider.model)) config.value.provider.model = ''
     return
   }
   config.value.provider.model = providerModelPreset.value
@@ -445,7 +459,7 @@ function applyProviderModelPreset() {
 function applyImageModelPreset() {
   if (!config.value) return
   if (imageModelPreset.value === customModelPreset) {
-    if (aliImageModelOptions.some(([value]) => value === config.value?.image_provider.model)) config.value.image_provider.model = ''
+    if (aliImageModelOptions.some(option => option.value === config.value?.image_provider.model)) config.value.image_provider.model = ''
     return
   }
   config.value.image_provider.model = imageModelPreset.value
@@ -733,10 +747,10 @@ function ensureImageProviderDefaults(draft: Config) {
     draft.image_provider = JSON.parse(JSON.stringify(draft.provider)) as ProviderConfig
   }
   draft.image_provider.type = 'chat_json'
-  if (!draft.image_provider.endpoint) draft.image_provider.endpoint = draft.provider.endpoint || 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-  if (!draft.image_provider.model) draft.image_provider.model = 'qwen3-vl-flash'
-  if (!draft.image_provider.timeout_ms) draft.image_provider.timeout_ms = 3500
-  if (!draft.image_provider.max_tokens) draft.image_provider.max_tokens = 300
+  if (!draft.image_provider.endpoint) draft.image_provider.endpoint = draft.provider.endpoint || 'https://dashscope-us.aliyuncs.com/compatible-mode/v1'
+  if (!draft.image_provider.model) draft.image_provider.model = 'qwen3-vl-flash-us'
+  if (!draft.image_provider.timeout_ms) draft.image_provider.timeout_ms = 3000
+  if (!draft.image_provider.max_tokens) draft.image_provider.max_tokens = 128
   if (!draft.image_provider.top_p) draft.image_provider.top_p = 1
   if (draft.image_provider.temperature === undefined || draft.image_provider.temperature === null) draft.image_provider.temperature = 0
   draft.image_provider.enable_few_shot = false
@@ -751,8 +765,8 @@ function ensurePromptTemplates(provider: ProviderConfig) {
   if (provider.prompt_templates.length === 0) {
     provider.prompt_templates.push({
       id: 'default-cyber',
-      name: '默认网络安全审核',
-      description: '自有资产防御低分，归属不明中低分，明确攻击他人高分。',
+      name: '默认综合内容审核',
+      description: '自有资产操作放行；明确攻击他人、露骨色情和人身伤害风险给高分。',
       system_prompt: provider.system_prompt || ''
     })
   }
@@ -929,14 +943,17 @@ onMounted(() => {
             <small class="field-hint">只填 WorkspaceId，系统会自动拼出当前地域的完整 Base URL。</small>
           </Field>
           <Field label="Base URL">
-            <input v-model="config.provider.endpoint" :readonly="endpointInputReadonly(providerEndpointPreset)" autocomplete="off" spellcheck="false" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+            <input v-model="config.provider.endpoint" :readonly="endpointInputReadonly(providerEndpointPreset)" autocomplete="off" spellcheck="false" placeholder="https://dashscope-us.aliyuncs.com/compatible-mode/v1" />
           </Field>
           <Field label="文本审核模型">
             <select v-model="providerModelPreset" @change="applyProviderModelPreset">
-              <option v-for="[value, label] in aliTextModelOptions" :key="value" :value="value">{{ label }}</option>
+              <optgroup v-for="group in modelOptionGroups" :key="group" :label="group">
+                <option v-for="option in modelOptionsInGroup(aliTextModelOptions, group)" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </optgroup>
               <option :value="customModelPreset">自定义模型名</option>
             </select>
-            <small class="field-hint">模型可用范围取决于所选地域；不在列表中时选择“自定义模型名”。</small>
+            <span v-if="providerModelInfo" class="model-guidance"><strong>{{ providerModelInfo.tier }}</strong><span>{{ providerModelInfo.description }}</span></span>
+            <small v-else class="field-hint">模型可用范围取决于所选地域；自定义模型请确认部署范围和 API 权限。</small>
           </Field>
           <Field v-if="providerModelPreset === customModelPreset" label="自定义模型名">
             <input v-model.trim="config.provider.model" autocomplete="off" spellcheck="false" placeholder="输入阿里模型 ID" />
@@ -952,7 +969,7 @@ onMounted(() => {
               <Field label="top_p"><input type="number" step="0.01" min="0" max="1" v-model.number="config.provider.top_p" /></Field>
               <Field label="最大输出 tokens"><input type="number" min="64" v-model.number="config.provider.max_tokens" /></Field>
               <Field label="超时 ms"><input type="number" v-model.number="config.provider.timeout_ms" /></Field>
-              <Field label="启用 few-shot 示例"><input type="checkbox" v-model="config.provider.enable_few_shot" /></Field>
+              <Field label="启用 few-shot 示例"><input type="checkbox" v-model="config.provider.enable_few_shot" /><small class="field-hint">建议开启；内置示例区分自有资产、攻击他人、露骨色情和医学解剖。</small></Field>
               <Field label="包裹 user_input"><input type="checkbox" v-model="config.provider.wrap_user_input" /></Field>
               <Field label="启用联网搜索"><input type="checkbox" v-model="config.provider.enable_search" /></Field>
               <Field label="启用显式思考"><input type="checkbox" v-model="config.provider.enable_thinking" /></Field>
@@ -1030,13 +1047,16 @@ onMounted(() => {
                 <input v-model.trim="imageWorkspaceId" autocomplete="off" spellcheck="false" placeholder="例如 llm-xxxxxx" @input="applyImageEndpointPreset" />
                 <small class="field-hint">只填 WorkspaceId，系统会自动拼出当前地域的完整 Base URL。</small>
               </Field>
-              <Field label="Base URL"><input v-model="config.image_provider.endpoint" :readonly="endpointInputReadonly(imageEndpointPreset)" autocomplete="off" spellcheck="false" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" /></Field>
+              <Field label="Base URL"><input v-model="config.image_provider.endpoint" :readonly="endpointInputReadonly(imageEndpointPreset)" autocomplete="off" spellcheck="false" placeholder="https://dashscope-us.aliyuncs.com/compatible-mode/v1" /></Field>
               <Field label="图片审核模型">
                 <select v-model="imageModelPreset" @change="applyImageModelPreset">
-                  <option v-for="[value, label] in aliImageModelOptions" :key="value" :value="value">{{ label }}</option>
+                  <optgroup v-for="group in modelOptionGroups" :key="group" :label="group">
+                    <option v-for="option in modelOptionsInGroup(aliImageModelOptions, group)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </optgroup>
                   <option :value="customModelPreset">自定义模型名</option>
                 </select>
-                <small class="field-hint">建议先用 qwen3-vl-flash；判断不稳时再换 plus 或 max。</small>
+                <span v-if="imageModelInfo" class="model-guidance"><strong>{{ imageModelInfo.tier }}</strong><span>{{ imageModelInfo.description }}</span></span>
+                <small v-else class="field-hint">自定义视觉模型必须支持 OpenAI-compatible image_url 输入和 JSON 输出。</small>
               </Field>
               <Field v-if="imageModelPreset === customModelPreset" label="自定义模型名"><input v-model.trim="config.image_provider.model" autocomplete="off" spellcheck="false" placeholder="输入阿里视觉模型 ID" /></Field>
               <details class="settings-disclosure wide">

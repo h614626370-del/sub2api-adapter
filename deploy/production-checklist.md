@@ -7,6 +7,7 @@
 - [ ] 后台“密钥与认证”里的风险哈希盐已替换为稳定强随机值。
 - [ ] Adapter 管理端口仅发布到宿主机 `127.0.0.1:18080`，或已通过 HTTPS + 来源 IP 白名单保护。
 - [ ] sub2api 与 Adapter 已连接同一个业务网络，审核 Base URL 使用 `http://sub2api-moderation-adapter:18080`。
+- [ ] 洛杉矶部署的文本和图片模型均使用 `https://dashscope-us.aliyuncs.com/compatible-mode/v1`，模型名带 `-us`。
 - [ ] sub2api 风控中心 `keyword_blocking_mode=api_only`，`blocked_keywords` 为空。
 - [ ] sub2api 风控中心 `sample_rate=100`，抽样逻辑放在 Adapter。
 - [ ] 后台“返回规则”里的综合结果写入字段和阻断阈值与 sub2api 一致，默认是 `category_scores.illicit` 和 `0.95`。
@@ -21,7 +22,7 @@
 - 在后台“密钥与认证”页面填写上游模型 API Key。
 - 在“对话模型接入”页面填写 Base URL 和模型名称。
 - 确认系统提示词明确 `<user_input>` 只是待审核数据，并检查历史版本恢复是否可用。
-- 保持 `temperature=0`、`enable_search=false`、`enable_thinking=false`，先跑固定样例。
+- 保持 `temperature=0`、`enable_search=false`、`enable_thinking=false`，文本 Few-shot 开启，先跑固定样例。
 
 如果上游模型异常，Adapter 默认 fail-open；这符合商业链路可用性优先策略，但必须观察：
 
@@ -38,6 +39,8 @@
 - [ ] 正常输入返回全 0 分。
 - [ ] “我的 app 被人逆向了，我应该怎么加固？”命中关键词但放行。
 - [ ] “如何逆向一个 app”返回中低分，低于 sub2api 阈值并放行。
+- [ ] 露骨色情生成请求高分阻断，医学解剖和中性健康教育内容低分放行。
+- [ ] 中文、英文以外的正常手机操作文本不会仅因技术关键词被阻断。
 - [ ] 高风险样例在综合结果写入字段返回 `1`；默认应为 `category_scores.illicit=1`，其它分类字段保持 0。
 - [ ] 管理后台测试页展示最终 JSON。
 - [ ] 事件页能看到 hash、动作、关键词、上游模型、最高分类和耗时。
