@@ -29,9 +29,12 @@ type App struct {
 	cache         *decisionCache
 	metrics       *metrics
 	events        *eventStore
+	keywordStats  *keywordStatsTracker
 	randMu        sync.Mutex
 	rand          *rand.Rand
 	cleanupCancel context.CancelFunc
+	cleanupWG     sync.WaitGroup
+	statsFlushMu  sync.Mutex
 	adminUsername string
 	adminPassword string
 	adminSecret   []byte
@@ -77,6 +80,12 @@ func NewApp(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("generate admin session secret: %w", err)
 	}
 	adminUsername, adminPassword := adminCredentials()
+	persistedKeywordStats, err := st.LoadKeywordStats(context.Background())
+	if err != nil {
+		cleanupCancel()
+		_ = st.Close()
+		return nil, fmt.Errorf("load keyword stats: %w", err)
+	}
 	app := &App{
 		cfg:           cfg,
 		keywords:      engine,
@@ -86,6 +95,7 @@ func NewApp(cfg Config) (*App, error) {
 		cache:         newDecisionCache(),
 		metrics:       newMetrics(),
 		events:        newEventStore(cfg.EventRetention),
+		keywordStats:  newKeywordStatsTracker(persistedKeywordStats),
 		rand:          rand.New(rand.NewSource(timeNow().UnixNano())),
 		cleanupCancel: cleanupCancel,
 		adminUsername: adminUsername,
@@ -93,7 +103,11 @@ func NewApp(cfg Config) (*App, error) {
 		adminSecret:   adminSecret,
 	}
 	_, _ = st.PruneDecisionCache(context.Background(), maxDecisionCacheEntries)
-	go app.runEventCleanupLoop(cleanupCtx)
+	app.cleanupWG.Add(1)
+	go func() {
+		defer app.cleanupWG.Done()
+		app.runEventCleanupLoop(cleanupCtx)
+	}()
 	return app, nil
 }
 
@@ -103,6 +117,12 @@ func (a *App) Close() error {
 	}
 	if a.cleanupCancel != nil {
 		a.cleanupCancel()
+	}
+	a.cleanupWG.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.flushKeywordStats(ctx); err != nil {
+		slog.Warn("keyword_stats_flush_failed", "error", err)
 	}
 	return a.store.Close()
 }
@@ -128,6 +148,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/api/events", a.handleAdminEvents)
 	mux.HandleFunc("POST /admin/api/events/clear", a.handleEventsClear)
 	mux.HandleFunc("POST /admin/api/events/prune", a.handleEventsPrune)
+	mux.HandleFunc("POST /admin/api/keyword-stats/clear", a.handleKeywordStatsClear)
 	mux.HandleFunc("GET /admin/api/audits", a.handleAdminAudits)
 	mux.HandleFunc("GET /admin/api/prompt/versions", a.handlePromptVersions)
 	mux.HandleFunc("POST /admin/api/prompt/restore", a.handlePromptRestore)
@@ -256,8 +277,25 @@ func (a *App) runEventCleanupLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			a.cleanupEvents(ctx)
+			if err := a.flushKeywordStats(ctx); err != nil {
+				slog.Warn("keyword_stats_flush_failed", "error", err)
+			}
 		}
 	}
+}
+
+func (a *App) flushKeywordStats(ctx context.Context) error {
+	a.statsFlushMu.Lock()
+	defer a.statsFlushMu.Unlock()
+	delta := a.keywordStats.TakePending()
+	if len(delta) == 0 {
+		return nil
+	}
+	if err := a.store.AddKeywordStats(ctx, delta); err != nil {
+		a.keywordStats.RestorePending(delta)
+		return err
+	}
+	return nil
 }
 
 func (a *App) cleanupEvents(ctx context.Context) {
@@ -343,8 +381,16 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 		hits = a.currentKeywords().Match(input.Text)
 		evt.KeywordHits = hits
 		evt.KeywordHit = len(hits) > 0
+		if len(hits) > 0 {
+			a.metrics.Inc("moderation_keyword_request_total", nil)
+		}
 		for _, hit := range hits {
 			a.metrics.Inc("moderation_keyword_hit_total", map[string]string{"category": hit.RiskDomain})
+		}
+		if len(hits) > 0 {
+			defer func() {
+				a.keywordStats.Record(hits, evt.ExternalAudited, evt.Action == "block")
+			}()
 		}
 	}
 

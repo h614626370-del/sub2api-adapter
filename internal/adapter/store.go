@@ -139,6 +139,14 @@ func (s *store) migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_prompt_versions_created_at ON prompt_versions(created_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS keyword_stats (
+			set_name TEXT PRIMARY KEY,
+			risk_domain TEXT NOT NULL,
+			hit_count INTEGER NOT NULL DEFAULT 0,
+			audited_count INTEGER NOT NULL DEFAULT 0,
+			blocked_count INTEGER NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -261,6 +269,58 @@ func (s *store) InsertEvent(ctx context.Context, e event) error {
 		e.LocalLatencyMS, e.ProviderLatencyMS, e.ErrorSummary, e.InputExcerpt, e.BlockedInput, e.ImageCount,
 		e.EstimatedCostCNY, e.EstimatedCostUSD, e.ProviderRawSummary, e.Time)
 	return err
+}
+
+func (s *store) LoadKeywordStats(ctx context.Context) ([]keywordStat, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT set_name, risk_domain, hit_count, audited_count, blocked_count, updated_at
+		FROM keyword_stats ORDER BY set_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []keywordStat
+	for rows.Next() {
+		var item keywordStat
+		if err := rows.Scan(&item.SetName, &item.RiskDomain, &item.HitCount, &item.AuditedCount, &item.BlockedCount, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) AddKeywordStats(ctx context.Context, items []keywordStat) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, item := range items {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO keyword_stats(
+			set_name, risk_domain, hit_count, audited_count, blocked_count, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(set_name) DO UPDATE SET
+			risk_domain = excluded.risk_domain,
+			hit_count = keyword_stats.hit_count + excluded.hit_count,
+			audited_count = keyword_stats.audited_count + excluded.audited_count,
+			blocked_count = keyword_stats.blocked_count + excluded.blocked_count,
+			updated_at = excluded.updated_at`,
+			item.SetName, item.RiskDomain, item.HitCount, item.AuditedCount, item.BlockedCount, item.UpdatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *store) ClearKeywordStats(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM keyword_stats`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *store) ListEvents(ctx context.Context, limit int, offset int, action string, inputHash string) ([]event, int, error) {

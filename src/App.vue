@@ -16,6 +16,7 @@ type ProviderConfig = {
 }
 type CacheConfig = { enabled: boolean; allow_ttl_seconds: number; block_ttl_seconds: number }
 type KeywordSet = { name: string; enabled: boolean; risk_domain: string; match_type: string; normalized: boolean; keywords: string[] }
+type KeywordStat = { set_name: string; risk_domain: string; enabled: boolean; hit_count: number; audited_count: number; blocked_count: number; updated_at?: string }
 type LabelMapping = { provider_label: string; target_category: string }
 type PromptTemplate = { id: string; name: string; description: string; system_prompt: string }
 type ProviderTestResult = { ok: boolean; latency_ms?: number; error?: string; result?: { action?: string; raw_summary?: string; latency_ms?: number } }
@@ -46,7 +47,7 @@ type Config = {
   event_retention: number; event_retention_days: number; estimated_prompt_price_usd_per_1m: number;
   estimated_completion_price_usd_per_1m: number; estimated_cached_price_usd_per_1m: number;
 }
-type Status = { provider: string; force_allow: boolean; provider_disabled: boolean; image_provider_enabled?: boolean; image_provider_key_status?: string; cache: Record<string, number>; events?: { total: number; oldest?: string; newest?: string; retention_days: number; max_rows: number }; metrics: Record<string, number>; keyword_sets: number; started_at: string; adapter_version: Record<string, string>; auth_token_configured: boolean; admin_login_mode?: string; hash_salt_configured: boolean; provider_key_status: string; production_warnings: string[]; database_path: string }
+type Status = { provider: string; force_allow: boolean; provider_disabled: boolean; image_provider_enabled?: boolean; image_provider_key_status?: string; cache: Record<string, number>; events?: { total: number; oldest?: string; newest?: string; retention_days: number; max_rows: number }; metrics: Record<string, number>; keyword_sets: number; keyword_stats?: KeywordStat[]; started_at: string; adapter_version: Record<string, string>; auth_token_configured: boolean; admin_login_mode?: string; hash_salt_configured: boolean; provider_key_status: string; production_warnings: string[]; database_path: string }
 
 const headers = computed<Record<string, string>>(() => ({}))
 const loggedIn = ref(false)
@@ -57,6 +58,7 @@ const loginBusy = ref(false)
 const active = ref('overview')
 const status = ref<Status | null>(null)
 const config = ref<Config | null>(null)
+const recommendedKeywordSets = ref<KeywordSet[]>([])
 const events = ref<any[]>([])
 const audits = ref<any[]>([])
 const promptVersions = ref<PromptVersion[]>([])
@@ -184,17 +186,17 @@ const aliEndpointOptions: AliEndpointOption[] = [
   { id: 'custom', label: '自定义 Base URL', region: '', workspace: false }
 ]
 const riskDomainOptions = [
-  ['cyber', '网络安全'],
+  ['cyber', '网络攻击'],
   ['credential', '账号凭证'],
-  ['abuse', '滥用/攻击'],
-  ['sexual', '色情'],
-  ['violence', '暴力'],
-  ['self_harm', '自伤']
+  ['abuse', '账号/批量滥用'],
+  ['sexual', '露骨色情'],
+  ['violence', '人身风险'],
+  ['self_harm', '自伤（兼容旧配置）']
 ] as const
 const matchTypeOptions = [
-  ['contains', '包含关键词'],
-  ['regex', '正则表达式'],
-  ['word_boundary', '按完整词匹配']
+  ['contains', '中文/短语包含（推荐）'],
+  ['word_boundary', '英文完整词'],
+  ['regex', '高级正则']
 ] as const
 const categoryLabels: Record<string, string> = {
   none: '无风险分类',
@@ -215,6 +217,7 @@ const categoryLabels: Record<string, string> = {
 const scoreCategoryOptions = Object.entries(categoryLabels).filter(([key]) => key !== 'none')
 
 const m = computed(() => status.value?.metrics || {})
+const keywordStats = computed(() => status.value?.keyword_stats || [])
 const cards = computed(() => [
   ['总请求', num(m.value.moderation_requests_total), '所有进入 Adapter 的 moderation 请求'],
   ['本地放行', num(m.value.moderation_local_allow_total), '未命中关键词且未抽样'],
@@ -226,7 +229,7 @@ const cards = computed(() => [
 ])
 const effectiveRate = computed(() => {
   if (config.value?.direct_model_audit) return 1
-  const hit = ratio(sumPrefix('moderation_keyword_hit_total'), m.value.moderation_requests_total || 0)
+  const hit = ratio(m.value.moderation_keyword_request_total || 0, m.value.moderation_requests_total || 0)
   const sample = config.value?.miss_sample_rate || 0
   return hit + (1 - hit) * sample
 })
@@ -248,6 +251,8 @@ function sumPrefix(prefix: string) {
 function ratio(a: number, b: number) { return b ? a / b : 0 }
 function pct(v: number) { return `${(v * 100).toFixed(2)}%` }
 function num(v: unknown) { return Number(v || 0).toLocaleString('zh-CN') }
+function keywordBlockRate(item: KeywordStat) { return item.audited_count ? item.blocked_count / item.audited_count : 0 }
+function riskDomainLabel(value: string) { return riskDomainOptions.find(([key]) => key === value)?.[1] || value || '-' }
 function boolText(v: unknown) { return v ? '是' : '否' }
 function dateText(v?: string) { return v && !v.startsWith('0001-') ? new Date(v).toLocaleString() : '-' }
 function imageAuditLabel(value?: string) { return imageAuditOptions.find(([id]) => id === value)?.[1] || value || '未设置' }
@@ -267,9 +272,14 @@ function durationText(seconds: unknown) {
   return days ? `${days}天 ${hours}小时` : hours ? `${hours}小时 ${minutes}分钟` : `${minutes}分钟`
 }
 function matchTypeHint(value: string) {
-  if (value === 'regex') return '按不区分大小写的 Go 正则表达式匹配归一化文本，例如 login\\s+failed。'
-  if (value === 'word_boundary') return '仅当前后不是字母、数字或下划线时命中，适合 token、shell 等英文完整词；中文连续文本不建议使用。'
-  return '按归一化后的子串匹配，忽略大小写，并兼容空格或常见标点差异。'
+  if (value === 'regex') return '仅供熟悉 Go 正则的高级配置使用，例如 login\\s+failed；普通关键词不要选这个。'
+  if (value === 'word_boundary') return '适合 sqli、rce、keygen 等英文术语；只有前后不是字母、数字或下划线时才命中。'
+  return '适合中文和固定短语；出现在文本任意位置就触发模型送审，但不会直接判定违规。'
+}
+function keywordPlaceholder(value: string) {
+  if (value === 'regex') return '每行一个 Go 正则表达式'
+  if (value === 'word_boundary') return '每行一个英文术语或英文短语'
+  return '每行一个中文关键词或固定短语'
 }
 function imageSampleRateHint(mode: string) {
   if (mode === 'sampled') return '对所有带图请求独立抽样，不区分是否命中关键词；0.05 表示随机审核 5%。'
@@ -485,6 +495,9 @@ async function refresh(options: { reloadConfig?: boolean } = {}) {
   loggedIn.value = true
   if (configResult) {
     config.value = configResult.config
+    recommendedKeywordSets.value = Array.isArray(configResult.recommended_keyword_sets)
+      ? JSON.parse(JSON.stringify(configResult.recommended_keyword_sets))
+      : []
     if (config.value) ensurePromptTemplates(config.value.provider)
     if (config.value) ensureImageProviderDefaults(config.value)
     if (config.value) syncEndpointControlsFromConfig()
@@ -546,6 +559,7 @@ async function logout() {
   await api('/admin/api/logout', { method: 'POST' }).catch(() => null)
   loggedIn.value = false
   config.value = null
+  recommendedKeywordSets.value = []
   status.value = null
   events.value = []
   audits.value = []
@@ -636,6 +650,12 @@ async function clearEvents() {
   const result = await api('/admin/api/events/clear', { method: 'POST' })
   eventNotice.value = `已清空事件记录 ${num(result.deleted)} 条`
   await refresh({ reloadConfig: false })
+}
+async function clearKeywordStats() {
+  if (!confirm('确认清空全部关键词效果统计？这个操作不会修改关键词配置、事件记录或其它运行数据。')) return
+  const result = await api('/admin/api/keyword-stats/clear', { method: 'POST' })
+  if (status.value) status.value.keyword_stats = result.keyword_stats || []
+  notice.value = `已清空 ${num(result.deleted)} 个关键词分组的历史统计`
 }
 async function changeEventFilter() {
   eventPage.value = 1
@@ -789,6 +809,15 @@ function clearSecretDrafts() {
 function addKeywordSet() { config.value?.keyword_sets.push({ name: '新分组', enabled: true, risk_domain: 'cyber', match_type: 'contains', normalized: true, keywords: [] }) }
 function keywordText(set: KeywordSet) { return set.keywords.join('\n') }
 function setKeywordText(set: KeywordSet, value: string) { set.keywords = [...new Set(value.split(/\r?\n/).map(s => s.trim()).filter(Boolean))] }
+function loadRecommendedKeywordSets() {
+  if (!config.value || recommendedKeywordSets.value.length === 0) {
+    notice.value = '暂时无法读取推荐关键词，请刷新页面后重试'
+    return
+  }
+  if (!confirm('载入推荐关键词会替换当前页面中的全部关键词分组，但不会修改模型、密钥、提示词或其它策略。确认继续？')) return
+  config.value.keyword_sets = JSON.parse(JSON.stringify(recommendedKeywordSets.value))
+  notice.value = '已载入推荐关键词；点击右上角保存后生效'
+}
 function exportConfig() {
   if (!config.value) return
   const blob = new Blob([JSON.stringify(config.value, null, 2)], { type: 'application/json' })
@@ -1244,26 +1273,54 @@ onMounted(() => {
         </section>
 
         <section v-if="active === 'keywords'" class="section">
-          <div class="explain-grid">
-            <div class="explain-item"><strong>包含关键词</strong><p>归一化后做子串匹配，忽略大小写，并兼容空格和常见标点差异；适合中文和固定短语。</p></div>
-            <div class="explain-item"><strong>正则表达式</strong><p>按不区分大小写的 Go 正则匹配归一化文本，适合格式变化较大的模式。</p></div>
-            <div class="explain-item"><strong>完整词匹配</strong><p>要求前后不是字母、数字或下划线，适合英文术语；中文连续文本通常应使用“包含”。</p></div>
+          <div class="callout keyword-callout">
+            <Tags :size="18" />
+            <span><strong>关键词只决定是否送审</strong>命中后仍由模型结合上下文打分，不会因为一个关键词直接阻断。</span>
           </div>
-          <div class="table-actions"><button @click="addKeywordSet"><Tags :size="16" />新增分组</button></div>
+          <div class="explain-grid">
+            <div class="explain-item"><strong>中文或固定短语</strong><p>选择“中文/短语包含（推荐）”。适合逆向、未授权访问、未成年色情等中文语义词。</p></div>
+            <div class="explain-item"><strong>英文安全术语</strong><p>选择“英文完整词”。适合 sqli、rce、keygen，避免在较长英文单词内部误命中。</p></div>
+            <div class="explain-item"><strong>复杂格式</strong><p>只有熟悉 Go 正则并确实需要模式匹配时才选择“高级正则”。</p></div>
+          </div>
+          <div class="subsection-heading keyword-stats-heading">
+            <div><h2>关键词效果统计</h2><p>每个请求在同一分组只计一次；阻断率按“阻断 ÷ 已送审”计算。命中缓存和关闭关键词预筛时不会重复计算。</p></div>
+            <button type="button" class="ghost" @click="clearKeywordStats"><Trash2 :size="16" />清空统计</button>
+          </div>
+          <div class="keyword-stats-scroll">
+            <table class="keyword-stats-table">
+              <thead><tr><th>关键词分组</th><th>风险领域</th><th>命中</th><th>已送审</th><th>阻断</th><th>阻断率</th><th>最近命中</th></tr></thead>
+              <tbody>
+                <tr v-for="item in keywordStats" :key="item.set_name">
+                  <td><strong>{{ item.set_name }}</strong><small class="table-subtext">{{ item.enabled ? '当前启用' : '当前停用' }}</small></td>
+                  <td>{{ riskDomainLabel(item.risk_domain) }}</td>
+                  <td>{{ num(item.hit_count) }}</td>
+                  <td>{{ num(item.audited_count) }}</td>
+                  <td>{{ num(item.blocked_count) }}</td>
+                  <td>{{ pct(keywordBlockRate(item)) }}</td>
+                  <td>{{ item.updated_at ? dateText(item.updated_at) : '-' }}</td>
+                </tr>
+                <tr v-if="!keywordStats.length"><td colspan="7" class="table-empty">暂无关键词分组统计。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-actions">
+            <button type="button" @click="loadRecommendedKeywordSets"><RotateCcw :size="16" />载入推荐关键词</button>
+            <button type="button" class="ghost" @click="addKeywordSet"><Tags :size="16" />新增分组</button>
+          </div>
           <div class="keyword-grid">
             <article v-for="(set, i) in config.keyword_sets" :key="i" class="keyword-set">
               <div class="keyword-head"><input v-model="set.name" /><label><input type="checkbox" v-model="set.enabled" />启用</label></div>
               <div class="mini-grid">
-                <select v-model="set.risk_domain">
+                <label class="mini-field"><span>风险领域</span><select v-model="set.risk_domain">
                   <option v-for="[value, label] in riskDomainOptions" :key="value" :value="value">{{ label }}</option>
-                </select>
-                <select v-model="set.match_type">
+                </select></label>
+                <label class="mini-field"><span>匹配方式</span><select v-model="set.match_type">
                   <option v-for="[value, label] in matchTypeOptions" :key="value" :value="value">{{ label }}</option>
-                </select>
+                </select></label>
               </div>
               <small class="match-type-hint">{{ matchTypeHint(set.match_type) }}</small>
-              <textarea :value="keywordText(set)" @input="setKeywordText(set, ($event.target as HTMLTextAreaElement).value)"></textarea>
-              <button class="ghost" @click="config.keyword_sets.splice(i, 1)">删除分组</button>
+              <label class="keyword-editor"><span>关键词（{{ set.keywords.length }} 个，每行一个）</span><textarea :value="keywordText(set)" :placeholder="keywordPlaceholder(set.match_type)" @input="setKeywordText(set, ($event.target as HTMLTextAreaElement).value)"></textarea></label>
+              <button type="button" class="ghost" @click="config.keyword_sets.splice(i, 1)"><Trash2 :size="15" />删除分组</button>
             </article>
           </div>
         </section>

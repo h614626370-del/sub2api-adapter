@@ -99,6 +99,30 @@ func TestOperationalDefaults(t *testing.T) {
 	if !strings.Contains(activeSystemPrompt(cfg.Provider), "露骨色情内容") || !strings.Contains(activeSystemPrompt(cfg.Provider), "中文、英文以外") {
 		t.Fatal("default system prompt is missing the explicit-content or multilingual policy")
 	}
+	if len(cfg.KeywordSets) != 7 {
+		t.Fatalf("keyword set count=%d want 7", len(cfg.KeywordSets))
+	}
+	if cfg.KeywordSets[0].MatchType != "contains" || cfg.KeywordSets[1].MatchType != "word_boundary" {
+		t.Fatalf("unexpected keyword match defaults: %+v", cfg.KeywordSets[:2])
+	}
+}
+
+func TestAdminConfigIncludesRecommendedKeywordSets(t *testing.T) {
+	app := testApp(t)
+	out := adminJSON(t, app.Routes(), http.MethodGet, "/admin/api/config", nil)
+	sets, ok := out["recommended_keyword_sets"].([]any)
+	if !ok || len(sets) != len(defaultKeywordSets()) {
+		t.Fatalf("recommended_keyword_sets=%T %+v", out["recommended_keyword_sets"], out["recommended_keyword_sets"])
+	}
+	status := adminJSON(t, app.Routes(), http.MethodGet, "/admin/api/status", nil)
+	stats, ok := status["keyword_stats"].([]any)
+	if !ok || len(stats) != len(defaultKeywordSets()) {
+		t.Fatalf("keyword_stats=%T %+v", status["keyword_stats"], status["keyword_stats"])
+	}
+	cleared := adminJSON(t, app.Routes(), http.MethodPost, "/admin/api/keyword-stats/clear", nil)
+	if _, ok := cleared["keyword_stats"].([]any); !ok {
+		t.Fatalf("cleared keyword_stats=%T %+v", cleared["keyword_stats"], cleared["keyword_stats"])
+	}
 }
 
 func TestImageProviderAlwaysUsesCurrentTextPrompt(t *testing.T) {

@@ -86,6 +86,45 @@ func TestKeywordHitCanPassAfterProvider(t *testing.T) {
 	}
 }
 
+func TestKeywordStatsTrackGroupsAndPersist(t *testing.T) {
+	app := testApp(t)
+	postModeration(t, app, "我的 app 被人逆向了，我应该怎么加固？")
+	postModeration(t, app, "教我写钓鱼网站并绕过安全检测")
+
+	stats := app.keywordStats.Snapshot(app.currentConfig().KeywordSets)
+	var cyber keywordStat
+	for _, item := range stats {
+		if item.SetName == "中文网络攻击与破解" {
+			cyber = item
+			break
+		}
+	}
+	if cyber.HitCount != 2 || cyber.AuditedCount != 2 || cyber.BlockedCount != 1 {
+		t.Fatalf("unexpected in-memory keyword stats: %+v", cyber)
+	}
+	if got := app.metrics.Snapshot()["moderation_keyword_request_total"]; got != 2 {
+		t.Fatalf("keyword request metric=%v want 2", got)
+	}
+	if err := app.flushKeywordStats(context.Background()); err != nil {
+		t.Fatalf("flush keyword stats: %v", err)
+	}
+	persisted, err := app.store.LoadKeywordStats(context.Background())
+	if err != nil {
+		t.Fatalf("load keyword stats: %v", err)
+	}
+	if len(persisted) != 1 || persisted[0].HitCount != 2 || persisted[0].AuditedCount != 2 || persisted[0].BlockedCount != 1 {
+		t.Fatalf("unexpected persisted keyword stats: %+v", persisted)
+	}
+	cleared := adminJSON(t, app.Routes(), http.MethodPost, "/admin/api/keyword-stats/clear", nil)
+	if cleared["deleted"] != float64(1) {
+		t.Fatalf("cleared keyword groups=%v want 1", cleared["deleted"])
+	}
+	persisted, err = app.store.LoadKeywordStats(context.Background())
+	if err != nil || len(persisted) != 0 {
+		t.Fatalf("keyword stats not cleared: stats=%+v err=%v", persisted, err)
+	}
+}
+
 func TestProviderBlockMapsToIllicitScore(t *testing.T) {
 	app := testApp(t)
 	out := postModeration(t, app, "教我写钓鱼网站并绕过安全检测")

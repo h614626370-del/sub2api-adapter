@@ -64,6 +64,7 @@ func (a *App) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		"cache":                     cacheStats,
 		"metrics":                   a.metrics.Snapshot(),
 		"keyword_sets":              len(cfg.KeywordSets),
+		"keyword_stats":             a.keywordStats.Snapshot(cfg.KeywordSets),
 		"started_at":                a.metrics.started,
 		"adapter_version":           VersionInfo(),
 		"auth_token_configured":     len(cfg.AuthTokens) > 0,
@@ -109,7 +110,10 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "未登录：请使用用户名密码登录后台", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"config": safeConfigForUI(a.currentConfig())})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"config":                   safeConfigForUI(a.currentConfig()),
+		"recommended_keyword_sets": defaultKeywordSets(),
+	})
 }
 
 func (a *App) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +327,37 @@ func (a *App) handleEventsPrune(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleKeywordStatsClear(w http.ResponseWriter, r *http.Request) {
+	if !a.adminAuthorized(w, r) {
+		http.Error(w, "未登录：请使用用户名密码登录后台", http.StatusUnauthorized)
+		return
+	}
+	a.statsFlushMu.Lock()
+	defer a.statsFlushMu.Unlock()
+	before := a.keywordStats.Snapshot(a.currentConfig().KeywordSets)
+	clearedGroups := 0
+	for _, item := range before {
+		if item.HitCount > 0 || item.AuditedCount > 0 || item.BlockedCount > 0 {
+			clearedGroups++
+		}
+	}
+	var persistedDeleted int64
+	err := a.keywordStats.Reset(func() error {
+		var err error
+		persistedDeleted, err = a.store.ClearKeywordStats(r.Context())
+		return err
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":           clearedGroups,
+		"persisted_deleted": persistedDeleted,
+		"keyword_stats":     a.keywordStats.Snapshot(a.currentConfig().KeywordSets),
+	})
 }
 
 func (a *App) handleAdminAudits(w http.ResponseWriter, r *http.Request) {

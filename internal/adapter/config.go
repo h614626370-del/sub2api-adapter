@@ -455,12 +455,13 @@ func generatedHashSalt() string {
 
 func defaultKeywordSets() []KeywordSet {
 	return []KeywordSet{
-		{Name: "网络安全", Enabled: true, RiskDomain: "cyber", MatchType: "contains", Normalized: true, Keywords: []string{"逆向", "破解", "绕过", "越权", "提权", "sql注入", "xss", "rce", "shell", "payload", "木马", "免杀", "钓鱼", "爆破"}},
-		{Name: "账号凭证", Enabled: true, RiskDomain: "credential", MatchType: "contains", Normalized: true, Keywords: []string{"盗号", "撞库", "cookie", "token", "access_key", "私钥", "信用卡", "身份证"}},
-		{Name: "滥用营销", Enabled: true, RiskDomain: "abuse", MatchType: "contains", Normalized: true, Keywords: []string{"群发", "引流", "养号", "验证码平台", "接码", "轰炸"}},
-		{Name: "色情", Enabled: true, RiskDomain: "sexual", MatchType: "contains", Normalized: true, Keywords: []string{"裸照", "未成年", "色情", "涉黄", "性器官", "生殖器", "阴茎", "阴道", "裸体", "裸露", "露点", "成人内容"}},
-		{Name: "暴力违禁", Enabled: true, RiskDomain: "violence", MatchType: "contains", Normalized: true, Keywords: []string{"爆炸物", "枪支", "毒品", "自制武器"}},
-		{Name: "自伤", Enabled: true, RiskDomain: "self_harm", MatchType: "contains", Normalized: true, Keywords: []string{"自杀", "自残", "安眠药"}},
+		{Name: "中文网络攻击与破解", Enabled: true, RiskDomain: "cyber", MatchType: "contains", Normalized: true, Keywords: []string{"逆向", "反编译", "破解", "绕过", "越权", "提权", "未授权访问", "sql注入", "命令执行", "漏洞利用", "反弹shell", "木马", "后门", "勒索软件", "免杀", "钓鱼", "爆破", "撞库", "盗号", "凭据填充"}},
+		{Name: "英文网络攻击术语", Enabled: true, RiskDomain: "cyber", MatchType: "word_boundary", Normalized: true, Keywords: []string{"sqli", "xss", "rce", "ssrf", "webshell", "reverse shell", "malware", "ransomware", "keygen", "crack", "phishing", "credential stuffing"}},
+		{Name: "账号与批量滥用", Enabled: true, RiskDomain: "abuse", MatchType: "contains", Normalized: true, Keywords: []string{"窃取token", "盗用token", "token池", "窃取cookie", "偷cookie", "盗用cookie", "窃取密钥", "爆破密码", "批量注册", "养号", "刷单", "刷量", "控评", "群发钓鱼", "诈骗群发", "验证码平台", "接码平台", "短信轰炸"}},
+		{Name: "露骨色情与成人深伪", Enabled: true, RiskDomain: "sexual", MatchType: "contains", Normalized: true, Keywords: []string{"裸照", "色情", "涉黄", "露骨色情", "性器官", "生殖器", "阴茎", "阴道", "裸体", "裸露", "露点", "性行为", "成人视频", "成人内容", "未成年色情", "儿童色情", "儿童性剥削", "不雅照", "色情图片", "成人深伪", "不雅换脸", "色情换脸"}},
+		{Name: "英文露骨色情与成人深伪", Enabled: true, RiskDomain: "sexual", MatchType: "word_boundary", Normalized: true, Keywords: []string{"explicit sex", "pornography", "porn", "nude photo", "nude image", "nude video", "csam", "child sexual abuse material", "revenge porn", "non-consensual intimate image", "sexual deepfake"}},
+		{Name: "真人隐私与现实暴力", Enabled: true, RiskDomain: "violence", MatchType: "contains", Normalized: true, Keywords: []string{"人肉搜索", "开盒", "社工库", "泄露住址", "查他住址", "查她住址", "暴力威胁", "杀人", "杀了他", "杀了她", "砍死", "捅死", "弄死", "炸死", "买凶", "投毒", "绑架", "上门砍", "上门报复", "现实报复", "枪支", "爆炸物", "自制武器", "制作炸弹"}},
+		{Name: "英文人身风险术语", Enabled: true, RiskDomain: "violence", MatchType: "word_boundary", Normalized: true, Keywords: []string{"dox", "doxxing", "kill", "murder", "kidnapping", "poisoning"}},
 	}
 }
 
