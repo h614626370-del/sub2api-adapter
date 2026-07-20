@@ -192,7 +192,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\smoke.ps1 `
 标准发布命令：
 
 ```powershell
-pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.9
+pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.10
 ```
 
 发布脚本应同时推送：
@@ -200,13 +200,13 @@ pwsh -File .\scripts\publish-docker.ps1 -Version 0.0.9
 - `614626370/sub2api-adapter:<version>`
 - `614626370/sub2api-adapter:latest`
 
-当前正式发布（2026-07-18）：
+当前正式发布（2026-07-20）：
 
-- 版本：`0.0.9`
-- Git 提交：`e5494fe64cb2`
-- Docker Hub 摘要：`sha256:c731b03f22d6496fd9cad81701694102ca02ab80c527771688fad0d401303fbb`
-- `0.0.9` 与 `latest` 指向同一摘要。
-- GitHub Release：`https://github.com/h614626370-del/sub2api-adapter/releases/tag/v0.0.9`
+- 版本：`0.0.10`
+- Git 提交：`1bb09f70277e`
+- Docker Hub 摘要：`sha256:4321cd8b038ba87bca95e911f3d56a905c91b79ad8c1e11a55fcf8364a1d0eef`
+- `0.0.10` 与 `latest` 指向同一摘要。
+- GitHub Release：`https://github.com/h614626370-del/sub2api-adapter/releases/tag/v0.0.10`
 - 发布前已通过 `go test`、`go vet`、前端构建、npm audit、暂存差异秘密扫描、桌面与 `390x844` 页面验收和最终镜像启动验证。
 
 当前 Windows 主机没有直接可用的 `docker` 命令时，使用 Ubuntu WSL 中的 Docker。WSL 已登录正确的 Docker Hub 账号，且已有 `614626370/kkflow-guide-api` 发布记录。虚拟机中的 Docker 登录不是该发布账号，不要从虚拟机执行 push，也不要读取或复制 Docker 凭据。
