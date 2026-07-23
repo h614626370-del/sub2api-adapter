@@ -108,6 +108,11 @@ func (s *store) migrate(ctx context.Context) error {
 			estimated_cost_cny REAL NOT NULL,
 			estimated_cost_usd REAL NOT NULL DEFAULT 0,
 			provider_raw_summary TEXT NOT NULL,
+			provider_failures TEXT NOT NULL DEFAULT '[]',
+			provider_calls INTEGER NOT NULL DEFAULT 0,
+			segment_count INTEGER NOT NULL DEFAULT 0,
+			segment_cache_hits INTEGER NOT NULL DEFAULT 0,
+			context_reviewed INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);`,
@@ -158,6 +163,17 @@ func (s *store) migrate(ctx context.Context) error {
 	}
 	if err := s.ensureColumn(ctx, "events", "blocked_input", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
+	}
+	for column, definition := range map[string]string{
+		"provider_failures":  `TEXT NOT NULL DEFAULT '[]'`,
+		"provider_calls":     `INTEGER NOT NULL DEFAULT 0`,
+		"segment_count":      `INTEGER NOT NULL DEFAULT 0`,
+		"segment_cache_hits": `INTEGER NOT NULL DEFAULT 0`,
+		"context_reviewed":   `INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if err := s.ensureColumn(ctx, "events", column, definition); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -258,16 +274,19 @@ func (s *store) GetPromptVersion(ctx context.Context, id int64) (promptVersion, 
 func (s *store) InsertEvent(ctx context.Context, e event) error {
 	keywordHits, _ := json.Marshal(e.KeywordHits)
 	categoryScores, _ := json.Marshal(e.CategoryScores)
+	providerFailures, _ := json.Marshal(e.ProviderFailures)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO events(
 		request_id, input_hash, action, keyword_hit, keyword_hits, sampled, external_audited,
 		provider, highest_category, highest_score, category_scores, local_latency_ms,
 		provider_latency_ms, error_summary, input_excerpt, blocked_input, image_count, estimated_cost_cny,
-		estimated_cost_usd, provider_raw_summary, created_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		estimated_cost_usd, provider_raw_summary, provider_failures, provider_calls, segment_count,
+		segment_cache_hits, context_reviewed, created_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.RequestID, e.InputHash, e.Action, boolInt(e.KeywordHit), string(keywordHits), boolInt(e.Sampled),
 		boolInt(e.ExternalAudited), e.Provider, e.HighestCategory, e.HighestScore, string(categoryScores),
 		e.LocalLatencyMS, e.ProviderLatencyMS, e.ErrorSummary, e.InputExcerpt, e.BlockedInput, e.ImageCount,
-		e.EstimatedCostCNY, e.EstimatedCostUSD, e.ProviderRawSummary, e.Time)
+		e.EstimatedCostCNY, e.EstimatedCostUSD, e.ProviderRawSummary, string(providerFailures), e.ProviderCalls,
+		e.SegmentCount, e.SegmentCacheHits, boolInt(e.ContextReviewed), e.Time)
 	return err
 }
 
@@ -350,7 +369,8 @@ func (s *store) ListEvents(ctx context.Context, limit int, offset int, action st
 	}
 	query := `SELECT request_id, input_hash, action, keyword_hit, keyword_hits, sampled, external_audited,
 		provider, highest_category, highest_score, category_scores, local_latency_ms, provider_latency_ms,
-		error_summary, input_excerpt, blocked_input, image_count, estimated_cost_cny, estimated_cost_usd, provider_raw_summary, created_at
+		error_summary, input_excerpt, blocked_input, image_count, estimated_cost_cny, estimated_cost_usd, provider_raw_summary,
+		provider_failures, provider_calls, segment_count, segment_cache_hits, context_reviewed, created_at
 		FROM events` + whereSQL + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
 	queryArgs := append(append([]any(nil), args...), limit, offset)
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
@@ -361,19 +381,22 @@ func (s *store) ListEvents(ctx context.Context, limit int, offset int, action st
 	var out []event
 	for rows.Next() {
 		var e event
-		var hitsRaw, scoresRaw string
-		var keywordHit, sampled, externalAudited int
+		var hitsRaw, scoresRaw, failuresRaw string
+		var keywordHit, sampled, externalAudited, contextReviewed int
 		if err := rows.Scan(&e.RequestID, &e.InputHash, &e.Action, &keywordHit, &hitsRaw, &sampled,
 			&externalAudited, &e.Provider, &e.HighestCategory, &e.HighestScore, &scoresRaw,
 			&e.LocalLatencyMS, &e.ProviderLatencyMS, &e.ErrorSummary, &e.InputExcerpt, &e.BlockedInput, &e.ImageCount,
-			&e.EstimatedCostCNY, &e.EstimatedCostUSD, &e.ProviderRawSummary, &e.Time); err != nil {
+			&e.EstimatedCostCNY, &e.EstimatedCostUSD, &e.ProviderRawSummary, &failuresRaw, &e.ProviderCalls,
+			&e.SegmentCount, &e.SegmentCacheHits, &contextReviewed, &e.Time); err != nil {
 			return nil, 0, err
 		}
 		e.KeywordHit = keywordHit == 1
 		e.Sampled = sampled == 1
 		e.ExternalAudited = externalAudited == 1
+		e.ContextReviewed = contextReviewed == 1
 		_ = json.Unmarshal([]byte(hitsRaw), &e.KeywordHits)
 		_ = json.Unmarshal([]byte(scoresRaw), &e.CategoryScores)
+		_ = json.Unmarshal([]byte(failuresRaw), &e.ProviderFailures)
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
@@ -821,11 +844,13 @@ func dedupeStrings(in []string) []string {
 }
 
 func configSummary(before Config, after Config) string {
-	return fmt.Sprintf("provider %s->%s, prompt_template %s->%s, result_score_category %s->%s, result_block_threshold %.4f->%.4f, force_allow %t->%t, direct_model_audit %t->%t, image_provider %t/%s/highres=%t->%t/%s/highres=%t, miss_sample_rate %.4f->%.4f, keyword_sets %d->%d",
+	return fmt.Sprintf("provider %s->%s, prompt_template %s->%s, result_score_category %s->%s, result_block_threshold %.4f->%.4f, force_allow %t->%t, direct_model_audit %t->%t, segment_audit %t/%d/%d->%t/%d/%d, image_provider %t/%s/highres=%t->%t/%s/highres=%t, miss_sample_rate %.4f->%.4f, keyword_sets %d->%d",
 		before.Provider.Type, after.Provider.Type, before.Provider.ActivePromptID, after.Provider.ActivePromptID,
 		before.ResultScoreCategory, after.ResultScoreCategory, before.ResultBlockThreshold, after.ResultBlockThreshold,
 		before.ForceAllow, after.ForceAllow,
-		before.DirectModelAudit, after.DirectModelAudit, before.ImageProviderEnabled, before.ImageProvider.Model,
+		before.DirectModelAudit, after.DirectModelAudit, before.SegmentAudit.Enabled, before.SegmentAudit.ThresholdChars,
+		before.SegmentAudit.TargetChars, after.SegmentAudit.Enabled, after.SegmentAudit.ThresholdChars, after.SegmentAudit.TargetChars,
+		before.ImageProviderEnabled, before.ImageProvider.Model,
 		before.ImageProvider.HighResolution, after.ImageProviderEnabled, after.ImageProvider.Model,
 		after.ImageProvider.HighResolution, before.MissSampleRate, after.MissSampleRate, len(before.KeywordSets), len(after.KeywordSets))
 }

@@ -15,6 +15,10 @@ type ProviderConfig = {
   enable_high_resolution_images?: boolean; timeout_ms: number; disabled: boolean; headers?: Record<string, string>
 }
 type CacheConfig = { enabled: boolean; allow_ttl_seconds: number; block_ttl_seconds: number }
+type SegmentAuditConfig = {
+  enabled: boolean; threshold_chars: number; target_chars: number; overlap_chars: number;
+  max_segments: number; concurrency: number; review_score: number; review_max_chars: number
+}
 type KeywordSet = { name: string; enabled: boolean; risk_domain: string; match_type: string; normalized: boolean; keywords: string[] }
 type KeywordStat = { set_name: string; risk_domain: string; enabled: boolean; hit_count: number; audited_count: number; blocked_count: number; updated_at?: string }
 type LabelMapping = { provider_label: string; target_category: string }
@@ -35,13 +39,13 @@ type AdminTestResult = {
   cache_hit?: boolean; provider?: string; provider_raw_summary?: string; category_scores?: Record<string, number>; final_response?: any;
   result_score_category?: string; result_score?: number; sub2api_block_threshold?: number;
   would_block_sub2api?: boolean; keyword_prefilter_enabled?: boolean; event?: any; adapter_request?: any; normalized_input?: any; provider_request?: any;
-  upstream_request?: any; upstream_response?: any; upstream_note?: string; cache_note?: string;
+  upstream_request?: any; upstream_response?: any; upstream_note?: string; cache_note?: string; segment_summary?: any;
 }
 type Config = {
   listen_addr: string; database_path: string; auth_tokens?: string[]; force_allow: boolean;
   max_body_bytes: number; direct_model_audit: boolean; miss_sample_rate: number; audit_on_keyword_hit: boolean; min_text_chars: number; max_text_chars: number;
   image_audit_mode: string; image_sample_rate: number; max_images_per_request: number; allow_data_url_image: boolean;
-  decision_cache: CacheConfig; hash_salt: string; result_score_category: string; result_block_threshold: number;
+  decision_cache: CacheConfig; segment_audit: SegmentAuditConfig; hash_salt: string; result_score_category: string; result_block_threshold: number;
   log_raw_input: boolean; keyword_sets: KeywordSet[]; provider_label_mapping: LabelMapping[]; provider: ProviderConfig;
   image_provider_enabled: boolean; image_provider: ProviderConfig;
   event_retention: number; event_retention_days: number; estimated_prompt_price_usd_per_1m: number;
@@ -113,7 +117,7 @@ const pageIntro: Record<string, { title: string; summary: string; impact: string
   mapping: { title: 'sub2api 返回规则', summary: '把上游返回的最终 confidence 写进一个指定的 category_scores 字段，其它分类字段保持放行分数。', impact: 'sub2api 按自己的阈值读取这个指定分数字段；链路测试页会显示该分数是否达到拦截阈值。' },
   images: { title: '图片审核', summary: '控制图片 URL 或 data URL 是否参与审核，以及图片请求的抽样和数量限制。', impact: '图片审核会增加调用成本；关闭后只处理文本。' },
   cache: { title: '决策缓存', summary: '相同内容短时间内复用上一次审核结果，减少延迟和上游模型调用次数。', impact: '缓存能省成本，但 prompt 或策略变更后可以清缓存，避免旧结果继续生效。' },
-  events: { title: '事件记录', summary: '集中查看阻断、故障放行和模型禁用放行，正常放行只保留汇总指标。', impact: '这里可以手动清理事件；系统运行中会按留存天数和最多保留条数定时删除旧记录。' },
+  events: { title: '事件记录', summary: '集中查看阻断、故障放行、故障复核恢复和模型禁用放行，正常放行只保留汇总指标。', impact: '这里可以手动清理事件；系统运行中会按留存天数和最多保留条数定时删除旧记录。' },
   audits: { title: '配置审计', summary: '查看谁在什么时候改了配置，以及改动摘要。', impact: '用于上线后追踪策略变更，敏感密钥不会显示明文。' },
   monitor: { title: '系统监控', summary: '查看进程内存、SQLite 数据、数据卷占用、磁盘余量、事件数量和关键运行指标。', impact: '监控数据只读；Docker stdout 日志由宿主机管理，不计入 Adapter 数据卷。' },
   system: { title: '系统维护', summary: '查看版本、执行在线更新、导入导出配置，或恢复推荐默认值。', impact: '在线更新会重启 Adapter；导入和恢复默认值会覆盖当前策略，操作前要确认。' }
@@ -135,6 +139,7 @@ const actionOptions = [
   ['allow', '放行'],
   ['block', '阻断'],
   ['fail_open', '故障放行'],
+  ['provider_recovered', '上游故障后复核恢复'],
   ['provider_disabled', '模型禁用放行'],
   ['force_allow', '全量放行']
 ] as const
@@ -355,6 +360,7 @@ function explainAction(action?: string) {
     case 'allow': return '放行'
     case 'block': return '阻断'
     case 'fail_open': return '故障放行'
+    case 'provider_recovered': return '复核恢复'
     case 'provider_disabled': return '模型禁用放行'
     case 'force_allow': return '全量放行'
     default: return action || '-'
@@ -365,10 +371,20 @@ function explainActionDetail(action?: string) {
     case 'allow': return '本地或模型判断可以通过'
     case 'block': return '当前策略判断应拦截'
     case 'fail_open': return '上游模型异常时按故障放行策略通过'
+    case 'provider_recovered': return '部分上游调用失败，但上下文复核成功并得到可用结论'
     case 'provider_disabled': return '上游模型被禁用，未调用模型'
     case 'force_allow': return '总开关开启后全部通过'
     default: return action || '-'
   }
+}
+function explainFailureKind(kind?: string) {
+  const labels: Record<string, string> = {
+    timeout: '调用超时', network: '网络故障', authentication: '鉴权或访问限制', rate_limit: '上游限流',
+    quota: '额度不足', upstream_unavailable: '上游服务不可用', content_refusal: '内容拒审',
+    invalid_response: '返回格式无效', empty_response: '空响应', configuration: '配置错误',
+    canceled: '请求取消', http_error: 'HTTP 错误', internal: '内部错误'
+  }
+  return labels[kind || ''] || kind || '未知错误'
 }
 function explainCategory(category?: string) {
   if (!category || category === '-') return '-'
@@ -1206,10 +1222,21 @@ onMounted(() => {
         </section>
 
         <section v-if="active === 'cache'" class="section form-grid">
+          <div class="wide subsection-heading"><div><h2>整段决策缓存</h2><p>完全相同的请求直接复用最终结论。策略、模型或提示词变化后会自动使用新的缓存键。</p></div></div>
           <Field label="启用决策缓存"><input type="checkbox" v-model="config.decision_cache.enabled" /></Field>
           <Field label="放行结果 TTL 秒"><input type="number" v-model.number="config.decision_cache.allow_ttl_seconds" :disabled="!config.decision_cache.enabled" /></Field>
           <Field label="阻断结果 TTL 秒"><input type="number" v-model.number="config.decision_cache.block_ttl_seconds" :disabled="!config.decision_cache.enabled" /></Field>
           <div class="wide inline-actions"><button @click="clearCache('allow')">清放行缓存</button><button @click="clearCache('block')">清阻断缓存</button><button @click="clearCache('')">清全部缓存</button></div>
+          <div class="wide subsection-heading"><div><h2>长内容增量审核</h2><p>只对长纯文本分段。重复的 Skill、历史消息和工具记录按片段复用缓存；风险或失败片段会带相邻上下文及最新末段再次复核。</p></div></div>
+          <Field label="启用长内容分段"><input type="checkbox" v-model="config.segment_audit.enabled" /><small class="field-hint">图片请求保持完整图文审核，不会被拆分。</small></Field>
+          <Field label="开始分段的字符数"><input type="number" min="1000" max="12000" step="100" v-model.number="config.segment_audit.threshold_chars" :disabled="!config.segment_audit.enabled" /><small class="field-hint">短于此长度继续使用原来的单次审核。</small></Field>
+          <Field label="目标片段字符数"><input type="number" min="500" max="4000" step="100" v-model.number="config.segment_audit.target_chars" :disabled="!config.segment_audit.enabled" /></Field>
+          <Field label="相邻重叠字符数"><input type="number" min="0" step="50" v-model.number="config.segment_audit.overlap_chars" :disabled="!config.segment_audit.enabled" /><small class="field-hint">保留跨段语义，保存时最多限制为片段长度的三分之一。</small></Field>
+          <Field label="最多片段数"><input type="number" min="2" max="16" v-model.number="config.segment_audit.max_segments" :disabled="!config.segment_audit.enabled" /></Field>
+          <Field label="并发调用数"><input type="number" min="1" max="6" v-model.number="config.segment_audit.concurrency" :disabled="!config.segment_audit.enabled" /><small class="field-hint">默认 3；过高可能触发上游限流。</small></Field>
+          <Field label="触发上下文复核分数"><input type="number" min="0.01" max="0.99" step="0.01" v-model.number="config.segment_audit.review_score" :disabled="!config.segment_audit.enabled" /><small class="field-hint">片段达到此分数不会直接阻断，而是进入上下文复核。</small></Field>
+          <Field label="复核上下文最大字符数"><input type="number" min="1000" max="12000" step="500" v-model.number="config.segment_audit.review_max_chars" :disabled="!config.segment_audit.enabled" /></Field>
+          <div class="wide callout"><AlertTriangle :size="18" /><span>分段结论不会简单取最高分。只有上下文复核后的最终分数才能阻断；正常片段缓存只保存哈希和模型结论，不保存明文。</span></div>
         </section>
 
         <section v-if="active === 'mapping'" class="section">
@@ -1390,6 +1417,10 @@ onMounted(() => {
                   <summary>归一化后的判断输入</summary>
                   <pre>{{ formatJSON(testResult.normalized_input) }}</pre>
                 </details>
+                <details v-if="testResult.segment_summary" class="param-details" open>
+                  <summary>长内容分段与缓存</summary>
+                  <pre>{{ formatJSON(testResult.segment_summary) }}</pre>
+                </details>
                 <details class="param-details" :open="!!testResult.upstream_request">
                   <summary>上游模型请求参数</summary>
                   <pre>{{ testResult.upstream_request ? formatJSON(testResult.upstream_request) : (testResult.upstream_note || '本次没有请求上游模型') }}</pre>
@@ -1415,7 +1446,7 @@ onMounted(() => {
 
         <section v-if="active === 'events'" class="section">
           <div class="explain-grid">
-            <div class="explain-item"><strong>动作是什么意思</strong><p>“放行”表示当前请求通过；“阻断”表示应拦截；“故障放行”表示上游模型异常时按策略先放过；“模型禁用放行”表示你关闭了模型调用。</p></div>
+            <div class="explain-item"><strong>动作是什么意思</strong><p>“放行”表示当前请求通过；“阻断”表示应拦截；“故障放行”表示没有获得完整模型结论；“复核恢复”表示部分调用失败后，上下文复核成功给出了可用结论。</p></div>
             <div class="explain-item"><strong>什么时候看这里</strong><p>排查阻断原因、上游模型故障或模型被禁用时，先按动作筛选，再看关键词、模型摘要、最高分类和错误。</p></div>
             <div class="explain-item"><strong>阻断内容</strong><p>被阻断的请求会保存并显示归一化后的文本明文；放行请求仍只保留指纹或脱敏摘要。</p></div>
             <div class="explain-item"><strong>事件怎么清理</strong><p>系统运行中每分钟检查一次。超过 {{ config.event_retention_days }} 天或超过 {{ config.event_retention }} 条的旧事件会被删除。</p></div>
@@ -1441,7 +1472,7 @@ onMounted(() => {
             <tr v-for="e in events" :key="e.request_id">
               <td>{{ new Date(e.time).toLocaleString() }}</td><td><span class="pill" :class="e.action">{{ explainAction(e.action) }}</span></td>
               <td class="event-input-cell"><details v-if="e.blocked_input"><summary>查看阻断明文</summary><p>{{ e.blocked_input }}</p></details><span v-else>{{ e.input_excerpt || '-' }}</span></td>
-              <td class="mono">{{ e.input_hash.slice(0, 12) }}</td><td>{{ e.keyword_hits?.map((h:any)=>h.keyword).join('、') || '-' }}</td><td>{{ explainProvider(e.provider) }}</td><td>{{ explainScore(e.highest_category, e.highest_score) }}</td><td>{{ e.local_latency_ms }}/{{ e.provider_latency_ms }}ms</td><td>{{ e.error_summary || '-' }}</td>
+              <td class="mono">{{ e.input_hash.slice(0, 12) }}</td><td>{{ e.keyword_hits?.map((h:any)=>h.keyword).join('、') || '-' }}</td><td>{{ explainProvider(e.provider) }}<small v-if="e.segment_count" class="table-meta">{{ e.segment_count }} 段 · 缓存 {{ e.segment_cache_hits }} · 调用 {{ e.provider_calls }}{{ e.context_reviewed ? ' · 已复核' : '' }}</small></td><td>{{ explainScore(e.highest_category, e.highest_score) }}</td><td>{{ e.local_latency_ms }}/{{ e.provider_latency_ms }}ms</td><td><details v-if="e.provider_failures?.length" class="failure-details"><summary>{{ e.provider_failures.length }} 条上游诊断</summary><div v-for="(failure, index) in e.provider_failures" :key="index" class="failure-item"><strong>{{ explainFailureKind(failure.kind) }}</strong><span>{{ failure.stage }}{{ failure.segment_index ? ` #${failure.segment_index}` : '' }}{{ failure.http_status ? ` · HTTP ${failure.http_status}` : '' }}</span><p>{{ failure.message }}</p><small v-if="failure.upstream_code || failure.upstream_request_id">错误码 {{ failure.upstream_code || '-' }} · 请求 ID {{ failure.upstream_request_id || '-' }}</small></div></details><span v-else>{{ e.error_summary || '-' }}</span></td>
             </tr>
             <tr v-if="!events.length"><td colspan="9" class="table-empty">当前筛选条件下没有事件记录。</td></tr>
           </tbody></table>

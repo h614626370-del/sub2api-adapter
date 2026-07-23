@@ -36,8 +36,20 @@ type moderationResult struct {
 }
 
 type extractedInput struct {
-	Text   string
-	Images []string
+	Text           string
+	StructuredText string
+	Images         []string
+}
+
+type providerFailure struct {
+	Stage        string `json:"stage"`
+	SegmentIndex int    `json:"segment_index,omitempty"`
+	Kind         string `json:"kind"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	UpstreamCode string `json:"upstream_code,omitempty"`
+	UpstreamID   string `json:"upstream_request_id,omitempty"`
+	Retryable    bool   `json:"retryable"`
+	Message      string `json:"message"`
 }
 
 type keywordHit struct {
@@ -79,6 +91,11 @@ type event struct {
 	EstimatedCostCNY   float64            `json:"estimated_cost_cny"`
 	EstimatedCostUSD   float64            `json:"estimated_cost_usd"`
 	ProviderRawSummary string             `json:"provider_raw_summary,omitempty"`
+	ProviderFailures   []providerFailure  `json:"provider_failures,omitempty"`
+	ProviderCalls      int                `json:"provider_calls"`
+	SegmentCount       int                `json:"segment_count"`
+	SegmentCacheHits   int                `json:"segment_cache_hits"`
+	ContextReviewed    bool               `json:"context_reviewed"`
 }
 
 type evaluationTrace struct {
@@ -86,4 +103,5 @@ type evaluationTrace struct {
 	UpstreamRequest  any              `json:"upstream_request,omitempty"`
 	UpstreamResponse any              `json:"upstream_response,omitempty"`
 	CacheNote        string           `json:"cache_note,omitempty"`
+	SegmentSummary   any              `json:"segment_summary,omitempty"`
 }

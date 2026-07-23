@@ -261,7 +261,7 @@ func (a *App) handleModeration(w http.ResponseWriter, r *http.Request) {
 
 func shouldPersistEvent(action string) bool {
 	switch action {
-	case "block", "fail_open", "provider_disabled":
+	case "block", "fail_open", "provider_recovered", "provider_disabled":
 		return true
 	default:
 		return false
@@ -449,27 +449,64 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 		NormalizedInput: input.Text,
 	}
 	trace.ProviderRequest = &providerReq
-	trace.UpstreamRequest = debugUpstreamRequest(p, providerReq)
-	evt.ExternalAudited = true
 	evt.Provider = providerName
-	a.metrics.Inc("moderation_provider_calls_total", map[string]string{"provider": providerName})
-
-	providerStart := timeNow()
-	providerResult, err := p.Audit(ctx, providerReq)
-	evt.ProviderLatencyMS = time.Since(providerStart).Milliseconds()
-	a.metrics.Observe("moderation_provider_latency_ms", map[string]string{"provider": providerName}, float64(evt.ProviderLatencyMS))
-	if err != nil {
+	var providerResult providerResult
+	var failures []providerFailure
+	complete := true
+	if shouldUseSegmentAudit(cfg, input, shouldAuditText, shouldAuditImage) {
+		segmented := a.auditSegments(ctx, p, providerName, providerReq, input, cfg)
+		providerResult = segmented.Result
+		failures = segmented.Failures
+		complete = segmented.Complete
+		evt.ProviderLatencyMS = segmented.LatencyMS
+		evt.ProviderCalls = segmented.ProviderCalls
+		evt.SegmentCount = len(segmented.Items)
+		evt.SegmentCacheHits = segmented.CacheHits
+		evt.ContextReviewed = segmented.ContextReviewed
+		evt.ExternalAudited = segmented.ProviderCalls > 0
+		trace.SegmentSummary = map[string]any{
+			"enabled": true, "segment_count": len(segmented.Items), "cache_hits": segmented.CacheHits,
+			"provider_calls": segmented.ProviderCalls, "context_reviewed": segmented.ContextReviewed, "items": segmented.Items,
+		}
+		trace.UpstreamRequest = map[string]any{
+			"mode": "segmented", "provider": providerName, "segment_count": len(segmented.Items),
+			"note": "仅未命中片段缓存的内容会送审；风险或失败片段会携带相邻片段和末段进行上下文复核。",
+		}
+		trace.UpstreamResponse = map[string]any{"ok": complete, "result": debugProviderResult(providerResult), "failures": failures}
+		a.metrics.Inc("moderation_segmented_requests_total", nil)
+		a.metrics.Add("moderation_segments_total", nil, float64(len(segmented.Items)))
+		a.metrics.Add("moderation_segment_cache_hits_total", nil, float64(segmented.CacheHits))
+		if segmented.ContextReviewed {
+			a.metrics.Inc("moderation_context_reviews_total", nil)
+		}
+	} else {
+		trace.UpstreamRequest = debugUpstreamRequest(p, providerReq)
+		evt.ExternalAudited = true
+		result, failure, latency := a.invokeProvider(ctx, p, providerName, providerReq, "request", 0)
+		providerResult = result
+		evt.ProviderLatencyMS = latency
+		evt.ProviderCalls = 1
+		if failure != nil {
+			failures = append(failures, *failure)
+			complete = false
+		}
+	}
+	evt.ProviderFailures = failures
+	if !complete {
 		d := allowDecision("fail_open")
 		evt.Action = "fail_open"
-		evt.ErrorSummary = safeSummary(err.Error(), 240)
+		evt.ErrorSummary = summarizeProviderFailures(failures)
 		evt.CategoryScores = d.CategoryScores
-		trace.UpstreamResponse = map[string]any{"ok": false, "error": evt.ErrorSummary, "latency_ms": evt.ProviderLatencyMS}
-		a.metrics.Inc("moderation_provider_errors_total", map[string]string{"provider": providerName})
+		if trace.UpstreamResponse == nil {
+			trace.UpstreamResponse = map[string]any{"ok": false, "error": evt.ErrorSummary, "failures": failures, "latency_ms": evt.ProviderLatencyMS}
+		}
 		a.metrics.Inc("moderation_fail_open_total", nil)
-		slog.Warn("moderation_provider_fail_open", "request_id", requestID, "provider", providerName, "error", err)
+		slog.Warn("moderation_provider_fail_open", "request_id", requestID, "provider", providerName, "failures", evt.ErrorSummary)
 		return d, evt, trace
 	}
-	trace.UpstreamResponse = debugProviderResult(providerResult)
+	if trace.UpstreamResponse == nil {
+		trace.UpstreamResponse = debugProviderResult(providerResult)
+	}
 
 	d := decisionFromProvider(providerResult, cfg, providerName)
 	if providerResult.PromptTokens > 0 {
@@ -489,6 +526,11 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 		a.metrics.Inc("moderation_provider_allow_total", map[string]string{"provider": providerName})
 	}
 	evt.Action = d.Action
+	if len(failures) > 0 && d.Action == "allow" {
+		evt.Action = "provider_recovered"
+		evt.ErrorSummary = summarizeProviderFailures(failures)
+		a.metrics.Inc("moderation_provider_recovered_total", map[string]string{"provider": providerName})
+	}
 	evt.ProviderRawSummary = d.RawSummary
 	evt.HighestCategory = d.HighestCategory
 	evt.HighestScore = d.HighestScore
@@ -496,13 +538,35 @@ func (a *App) evaluateWithTrace(ctx context.Context, requestID string, req moder
 	evt.EstimatedCostUSD = a.estimatedTokenCostUSD(providerResult)
 	a.metrics.Add("moderation_estimated_cost_usd_total", nil, evt.EstimatedCostUSD)
 
-	if cfg.DecisionCache.Enabled {
+	if cfg.DecisionCache.Enabled && len(failures) == 0 {
 		a.cache.Set(cacheHash, d, a.ttlFor(d.Action))
 		if err := a.store.SaveDecision(ctx, cacheHash, d, a.ttlFor(d.Action)); err != nil {
 			slog.Warn("decision_cache_save_failed", "error", err)
 		}
 	}
 	return d, evt, trace
+}
+
+func summarizeProviderFailures(failures []providerFailure) string {
+	if len(failures) == 0 {
+		return "上游调用失败，但没有可用诊断信息"
+	}
+	parts := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		location := failure.Stage
+		if failure.SegmentIndex > 0 {
+			location += fmt.Sprintf("#%d", failure.SegmentIndex)
+		}
+		status := ""
+		if failure.HTTPStatus > 0 {
+			status = fmt.Sprintf(" HTTP %d", failure.HTTPStatus)
+		}
+		parts = append(parts, fmt.Sprintf("%s[%s%s] %s", location, failure.Kind, status, failure.Message))
+		if len(parts) >= 4 {
+			break
+		}
+	}
+	return safeSummary(strings.Join(parts, "；"), 1200)
 }
 
 func (a *App) shouldAuditImage(hasImage bool, keywordHit bool, sampled bool, directTextAudit bool) bool {

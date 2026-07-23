@@ -257,6 +257,7 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 		"sampled":                   evt.Sampled,
 		"cache_hit":                 evt.CacheHit,
 		"cache_note":                trace.CacheNote,
+		"segment_summary":           trace.SegmentSummary,
 		"external_audited":          evt.ExternalAudited,
 		"provider":                  evt.Provider,
 		"provider_request":          redactDebugValue(trace.ProviderRequest),

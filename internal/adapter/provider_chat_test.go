@@ -1,10 +1,64 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestChatProviderClassifiesSuccessfulContentFilterResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"choices": []map[string]any{{
+				"finish_reason": "content_filter",
+				"message":       map[string]any{"content": "", "refusal": "sensitive content rejected"},
+			}},
+		})
+	}))
+	defer server.Close()
+	p := &chatJSONProvider{cfg: ProviderConfig{Endpoint: server.URL, APIKey: "test-key", Model: "qwen-test", TimeoutMS: 1000}, client: server.Client()}
+	_, err := p.Audit(context.Background(), providerRequest{Text: "test", AuditText: true})
+	if err == nil {
+		t.Fatal("expected content refusal error")
+	}
+	failure := providerFailureFromError(err, "request", 0)
+	if failure.Kind != "content_refusal" || failure.Retryable || !strings.Contains(failure.Message, "finish_reason=content_filter") {
+		t.Fatalf("unexpected refusal failure: %+v", failure)
+	}
+}
+
+func TestChatProviderTreatsContentFilterAsRefusalEvenWithJSONContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "request-filtered-200")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"choices": []map[string]any{{
+				"finish_reason": "content_filter",
+				"message":       map[string]any{"content": `{"confidence":0.01,"reason":""}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	p := &chatJSONProvider{cfg: ProviderConfig{Endpoint: server.URL, APIKey: "test-key", Model: "qwen-test", TimeoutMS: 1000}, client: server.Client()}
+	_, err := p.Audit(context.Background(), providerRequest{Text: "test", AuditText: true})
+	if err == nil {
+		t.Fatal("expected content refusal error")
+	}
+	failure := providerFailureFromError(err, "request", 0)
+	if failure.Kind != "content_refusal" || failure.UpstreamID != "request-filtered-200" || failure.Retryable {
+		t.Fatalf("unexpected content-filter failure: %+v", failure)
+	}
+}
+
+func TestChatHTTPErrorClassifiesQuotaBeforeRateLimit(t *testing.T) {
+	kind := classifyChatHTTPError(http.StatusTooManyRequests, `{"error":{"code":"Arrearage","message":"insufficient balance"}}`)
+	if kind != "quota" || retryableChatHTTPError(kind, http.StatusTooManyRequests) {
+		t.Fatalf("kind=%q retryable=%t", kind, retryableChatHTTPError(kind, http.StatusTooManyRequests))
+	}
+}
 
 func TestChatRequestHighResolutionImagesOnlyForImageAudit(t *testing.T) {
 	p := &chatJSONProvider{cfg: ProviderConfig{

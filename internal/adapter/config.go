@@ -13,36 +13,37 @@ import (
 )
 
 type Config struct {
-	ListenAddr           string         `json:"listen_addr"`
-	DatabasePath         string         `json:"database_path"`
-	AuthTokens           []string       `json:"auth_tokens"`
-	AdminToken           string         `json:"admin_token,omitempty"`
-	ForceAllow           bool           `json:"force_allow"`
-	MaxBodyBytes         int64          `json:"max_body_bytes"`
-	DirectModelAudit     bool           `json:"direct_model_audit"`
-	MissSampleRate       float64        `json:"miss_sample_rate"`
-	AuditOnKeywordHit    bool           `json:"audit_on_keyword_hit"`
-	MinTextChars         int            `json:"min_text_chars"`
-	MaxTextChars         int            `json:"max_text_chars"`
-	ImageAuditMode       string         `json:"image_audit_mode"`
-	ImageSampleRate      float64        `json:"image_sample_rate"`
-	MaxImages            int            `json:"max_images_per_request"`
-	AllowDataURLImage    bool           `json:"allow_data_url_image"`
-	DecisionCache        CacheConfig    `json:"decision_cache"`
-	HashSalt             string         `json:"hash_salt"`
-	ResultScoreCategory  string         `json:"result_score_category"`
-	ResultBlockThreshold float64        `json:"result_block_threshold"`
-	LogRawInput          bool           `json:"log_raw_input"`
-	KeywordSets          []KeywordSet   `json:"keyword_sets"`
-	LabelMappings        []LabelMapping `json:"provider_label_mapping"`
-	Provider             ProviderConfig `json:"provider"`
-	ImageProviderEnabled bool           `json:"image_provider_enabled"`
-	ImageProvider        ProviderConfig `json:"image_provider"`
-	EventRetention       int            `json:"event_retention"`
-	EventRetentionDays   int            `json:"event_retention_days"`
-	EstimatedPromptUSD   float64        `json:"estimated_prompt_price_usd_per_1m"`
-	EstimatedOutputUSD   float64        `json:"estimated_completion_price_usd_per_1m"`
-	EstimatedCachedUSD   float64        `json:"estimated_cached_price_usd_per_1m"`
+	ListenAddr           string             `json:"listen_addr"`
+	DatabasePath         string             `json:"database_path"`
+	AuthTokens           []string           `json:"auth_tokens"`
+	AdminToken           string             `json:"admin_token,omitempty"`
+	ForceAllow           bool               `json:"force_allow"`
+	MaxBodyBytes         int64              `json:"max_body_bytes"`
+	DirectModelAudit     bool               `json:"direct_model_audit"`
+	MissSampleRate       float64            `json:"miss_sample_rate"`
+	AuditOnKeywordHit    bool               `json:"audit_on_keyword_hit"`
+	MinTextChars         int                `json:"min_text_chars"`
+	MaxTextChars         int                `json:"max_text_chars"`
+	ImageAuditMode       string             `json:"image_audit_mode"`
+	ImageSampleRate      float64            `json:"image_sample_rate"`
+	MaxImages            int                `json:"max_images_per_request"`
+	AllowDataURLImage    bool               `json:"allow_data_url_image"`
+	DecisionCache        CacheConfig        `json:"decision_cache"`
+	SegmentAudit         SegmentAuditConfig `json:"segment_audit"`
+	HashSalt             string             `json:"hash_salt"`
+	ResultScoreCategory  string             `json:"result_score_category"`
+	ResultBlockThreshold float64            `json:"result_block_threshold"`
+	LogRawInput          bool               `json:"log_raw_input"`
+	KeywordSets          []KeywordSet       `json:"keyword_sets"`
+	LabelMappings        []LabelMapping     `json:"provider_label_mapping"`
+	Provider             ProviderConfig     `json:"provider"`
+	ImageProviderEnabled bool               `json:"image_provider_enabled"`
+	ImageProvider        ProviderConfig     `json:"image_provider"`
+	EventRetention       int                `json:"event_retention"`
+	EventRetentionDays   int                `json:"event_retention_days"`
+	EstimatedPromptUSD   float64            `json:"estimated_prompt_price_usd_per_1m"`
+	EstimatedOutputUSD   float64            `json:"estimated_completion_price_usd_per_1m"`
+	EstimatedCachedUSD   float64            `json:"estimated_cached_price_usd_per_1m"`
 }
 
 type CacheConfig struct {
@@ -51,6 +52,17 @@ type CacheConfig struct {
 	BlockTTLSeconds int  `json:"block_ttl_seconds"`
 	allowTTL        time.Duration
 	blockTTL        time.Duration
+}
+
+type SegmentAuditConfig struct {
+	Enabled        bool    `json:"enabled"`
+	ThresholdChars int     `json:"threshold_chars"`
+	TargetChars    int     `json:"target_chars"`
+	OverlapChars   int     `json:"overlap_chars"`
+	MaxSegments    int     `json:"max_segments"`
+	Concurrency    int     `json:"concurrency"`
+	ReviewScore    float64 `json:"review_score"`
+	ReviewMaxChars int     `json:"review_max_chars"`
 }
 
 type ProviderConfig struct {
@@ -129,6 +141,16 @@ func DefaultConfig() Config {
 			AllowTTLSeconds: 3600,
 			BlockTTLSeconds: 86400,
 		},
+		SegmentAudit: SegmentAuditConfig{
+			Enabled:        true,
+			ThresholdChars: 4000,
+			TargetChars:    1800,
+			OverlapChars:   200,
+			MaxSegments:    8,
+			Concurrency:    3,
+			ReviewScore:    0.50,
+			ReviewMaxChars: 6000,
+		},
 		Provider: ProviderConfig{
 			Type:            "chat_json",
 			Endpoint:        "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
@@ -194,6 +216,48 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.MinTextChars < 0 {
 		cfg.MinTextChars = 0
+	}
+	if cfg.SegmentAudit.ThresholdChars == 0 && cfg.SegmentAudit.TargetChars == 0 && cfg.SegmentAudit.MaxSegments == 0 {
+		cfg.SegmentAudit = DefaultConfig().SegmentAudit
+	}
+	if cfg.SegmentAudit.ThresholdChars < 1000 {
+		cfg.SegmentAudit.ThresholdChars = 4000
+	}
+	if cfg.SegmentAudit.ThresholdChars > cfg.MaxTextChars {
+		cfg.SegmentAudit.ThresholdChars = cfg.MaxTextChars
+	}
+	if cfg.SegmentAudit.TargetChars < 500 {
+		cfg.SegmentAudit.TargetChars = 1800
+	}
+	if cfg.SegmentAudit.TargetChars > 4000 {
+		cfg.SegmentAudit.TargetChars = 4000
+	}
+	if cfg.SegmentAudit.OverlapChars < 0 {
+		cfg.SegmentAudit.OverlapChars = 0
+	}
+	if cfg.SegmentAudit.OverlapChars > cfg.SegmentAudit.TargetChars/3 {
+		cfg.SegmentAudit.OverlapChars = cfg.SegmentAudit.TargetChars / 3
+	}
+	if cfg.SegmentAudit.MaxSegments < 2 {
+		cfg.SegmentAudit.MaxSegments = 8
+	}
+	if cfg.SegmentAudit.MaxSegments > 16 {
+		cfg.SegmentAudit.MaxSegments = 16
+	}
+	if cfg.SegmentAudit.Concurrency < 1 {
+		cfg.SegmentAudit.Concurrency = 3
+	}
+	if cfg.SegmentAudit.Concurrency > 6 {
+		cfg.SegmentAudit.Concurrency = 6
+	}
+	if cfg.SegmentAudit.ReviewScore <= 0 || cfg.SegmentAudit.ReviewScore >= 1 {
+		cfg.SegmentAudit.ReviewScore = 0.50
+	}
+	if cfg.SegmentAudit.ReviewMaxChars < cfg.SegmentAudit.TargetChars*2 {
+		cfg.SegmentAudit.ReviewMaxChars = cfg.SegmentAudit.TargetChars * 2
+	}
+	if cfg.SegmentAudit.ReviewMaxChars > cfg.MaxTextChars {
+		cfg.SegmentAudit.ReviewMaxChars = cfg.MaxTextChars
 	}
 	if cfg.MaxImages <= 0 {
 		cfg.MaxImages = 2
@@ -377,6 +441,30 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v, ok := boolEnv("DIRECT_MODEL_AUDIT"); ok {
 		cfg.DirectModelAudit = v
+	}
+	if v, ok := boolEnv("SEGMENT_AUDIT_ENABLED"); ok {
+		cfg.SegmentAudit.Enabled = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_THRESHOLD_CHARS"); ok {
+		cfg.SegmentAudit.ThresholdChars = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_TARGET_CHARS"); ok {
+		cfg.SegmentAudit.TargetChars = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_OVERLAP_CHARS"); ok {
+		cfg.SegmentAudit.OverlapChars = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_MAX_SEGMENTS"); ok {
+		cfg.SegmentAudit.MaxSegments = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_CONCURRENCY"); ok {
+		cfg.SegmentAudit.Concurrency = v
+	}
+	if v, ok := floatEnv("SEGMENT_AUDIT_REVIEW_SCORE"); ok {
+		cfg.SegmentAudit.ReviewScore = v
+	}
+	if v, ok := intEnv("SEGMENT_AUDIT_REVIEW_MAX_CHARS"); ok {
+		cfg.SegmentAudit.ReviewMaxChars = v
 	}
 	if v, ok := boolEnv("IMAGE_PROVIDER_ENABLED"); ok {
 		cfg.ImageProviderEnabled = v

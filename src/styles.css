@@ -282,12 +282,21 @@ tbody tr:hover { background: oklch(0.975 0.005 250); }
 .pill { border-radius: 999px; padding: 4px 9px; font-size: .76rem; font-weight: 800; background: var(--surface-raised); border: 1px solid var(--line); white-space: nowrap; }
 .pill.ok, .pill.allow { color: oklch(0.32 0.1 145); background: oklch(0.95 0.035 145); border-color: oklch(0.80 0.08 145); }
 .pill.danger, .pill.block, .pill.fail_open { color: white; background: var(--danger); border-color: var(--danger); }
+.pill.provider_recovered { color: oklch(0.34 0.09 75); background: oklch(0.95 0.05 82); border-color: oklch(0.78 0.10 78); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 pre { overflow: auto; max-width: 100%; background: oklch(0.16 0.018 250); color: oklch(0.94 0.01 250); padding: 14px; border-radius: 7px; min-height: 160px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .events-table { min-width: 1280px; }
 .event-input-cell { width: 260px; }
 .event-input-cell details summary { color: var(--primary); cursor: pointer; font-weight: 750; }
 .event-input-cell details p { margin-top: 8px; color: var(--ink); white-space: pre-wrap; max-height: 220px; overflow: auto; }
+.table-meta { display: block; margin-top: 4px; color: var(--muted); white-space: nowrap; }
+.failure-details { min-width: 240px; max-width: 440px; }
+.failure-details summary { cursor: pointer; color: var(--danger); font-weight: 700; }
+.failure-item { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.failure-item:last-child { border-bottom: 0; }
+.failure-item strong, .failure-item span, .failure-item small { display: block; }
+.failure-item span, .failure-item small { margin-top: 3px; color: var(--muted); }
+.failure-item p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .table-empty { text-align: center; color: var(--muted); padding: 28px; }
 .pagination-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; color: var(--muted); }
 .pagination-bar > div { display: flex; gap: 6px; }

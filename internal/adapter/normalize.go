@@ -17,12 +17,15 @@ func extractModerationInput(input any, maxTextChars int, maxImages int, allowDat
 	var parts []string
 	var images []string
 	collectInput(input, &parts, &images, allowDataURL)
-	text := normalizeText(strings.Join(parts, "\n"))
+	rawText := strings.Join(parts, "\n\n")
+	text := normalizeText(rawText)
+	structuredText := normalizeStructuredText(rawText)
 	if maxTextChars > 0 {
 		text = trimRunes(text, maxTextChars)
+		structuredText = trimRunes(structuredText, maxTextChars)
 	}
 	images = dedupeImages(images, maxImages)
-	return extractedInput{Text: text, Images: images}
+	return extractedInput{Text: text, StructuredText: structuredText, Images: images}
 }
 
 func collectInput(v any, parts *[]string, images *[]string, allowDataURL bool) {
@@ -139,6 +142,16 @@ func normalizeText(text string) string {
 	return strings.TrimSpace(b.String())
 }
 
+func normalizeStructuredText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = normalizeText(line)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
 func compactForMatch(text string) string {
 	var b strings.Builder
 	for _, r := range normalizeText(text) {
@@ -196,46 +209,47 @@ func policyFingerprint(cfg Config) string {
 	imageProviderHeadersHash := stableJSONHash(cfg.ImageProvider.Headers)
 	imageProviderCfg := effectiveImageProviderConfig(cfg)
 	policy := struct {
-		AlgorithmVersion        string         `json:"algorithm_version"`
-		ProviderType            string         `json:"provider_type"`
-		ProviderEndpoint        string         `json:"provider_endpoint"`
-		ProviderModel           string         `json:"provider_model"`
-		ProviderDisabled        bool           `json:"provider_disabled"`
-		ProviderCredential      string         `json:"provider_credential_hash"`
-		ActivePromptID          string         `json:"active_prompt_id"`
-		ActivePromptHash        string         `json:"active_prompt_hash"`
-		EnableFewShot           bool           `json:"enable_few_shot"`
-		WrapUserInput           bool           `json:"wrap_user_input"`
-		EnableSearch            bool           `json:"enable_search"`
-		EnableThinking          bool           `json:"enable_thinking"`
-		ThinkingBudget          int            `json:"thinking_budget"`
-		Temperature             float64        `json:"temperature"`
-		TopP                    float64        `json:"top_p"`
-		MaxTokens               int            `json:"max_tokens"`
-		ProviderHeaders         string         `json:"provider_headers_hash"`
-		ImageProviderEnabled    bool           `json:"image_provider_enabled"`
-		ImageProviderType       string         `json:"image_provider_type"`
-		ImageProviderEndpoint   string         `json:"image_provider_endpoint"`
-		ImageProviderModel      string         `json:"image_provider_model"`
-		ImageHighResolution     bool           `json:"image_high_resolution"`
-		ImageProviderCredential string         `json:"image_provider_credential_hash"`
-		ImageProviderPromptHash string         `json:"image_provider_prompt_hash"`
-		ImageProviderHeaders    string         `json:"image_provider_headers_hash"`
-		DirectModelAudit        bool           `json:"direct_model_audit"`
-		MissSampleRate          float64        `json:"miss_sample_rate"`
-		AuditKeywordHit         bool           `json:"audit_on_keyword_hit"`
-		MinTextChars            int            `json:"min_text_chars"`
-		MaxTextChars            int            `json:"max_text_chars"`
-		ImageAuditMode          string         `json:"image_audit_mode"`
-		ImageSampleRate         float64        `json:"image_sample_rate"`
-		MaxImages               int            `json:"max_images_per_request"`
-		AllowDataURLImage       bool           `json:"allow_data_url_image"`
-		ResultScoreCategory     string         `json:"result_score_category"`
-		ResultBlockThreshold    float64        `json:"result_block_threshold"`
-		KeywordSets             []KeywordSet   `json:"keyword_sets"`
-		LabelMappings           []LabelMapping `json:"provider_label_mapping"`
+		AlgorithmVersion        string             `json:"algorithm_version"`
+		ProviderType            string             `json:"provider_type"`
+		ProviderEndpoint        string             `json:"provider_endpoint"`
+		ProviderModel           string             `json:"provider_model"`
+		ProviderDisabled        bool               `json:"provider_disabled"`
+		ProviderCredential      string             `json:"provider_credential_hash"`
+		ActivePromptID          string             `json:"active_prompt_id"`
+		ActivePromptHash        string             `json:"active_prompt_hash"`
+		EnableFewShot           bool               `json:"enable_few_shot"`
+		WrapUserInput           bool               `json:"wrap_user_input"`
+		EnableSearch            bool               `json:"enable_search"`
+		EnableThinking          bool               `json:"enable_thinking"`
+		ThinkingBudget          int                `json:"thinking_budget"`
+		Temperature             float64            `json:"temperature"`
+		TopP                    float64            `json:"top_p"`
+		MaxTokens               int                `json:"max_tokens"`
+		ProviderHeaders         string             `json:"provider_headers_hash"`
+		ImageProviderEnabled    bool               `json:"image_provider_enabled"`
+		ImageProviderType       string             `json:"image_provider_type"`
+		ImageProviderEndpoint   string             `json:"image_provider_endpoint"`
+		ImageProviderModel      string             `json:"image_provider_model"`
+		ImageHighResolution     bool               `json:"image_high_resolution"`
+		ImageProviderCredential string             `json:"image_provider_credential_hash"`
+		ImageProviderPromptHash string             `json:"image_provider_prompt_hash"`
+		ImageProviderHeaders    string             `json:"image_provider_headers_hash"`
+		DirectModelAudit        bool               `json:"direct_model_audit"`
+		MissSampleRate          float64            `json:"miss_sample_rate"`
+		AuditKeywordHit         bool               `json:"audit_on_keyword_hit"`
+		MinTextChars            int                `json:"min_text_chars"`
+		MaxTextChars            int                `json:"max_text_chars"`
+		ImageAuditMode          string             `json:"image_audit_mode"`
+		ImageSampleRate         float64            `json:"image_sample_rate"`
+		MaxImages               int                `json:"max_images_per_request"`
+		AllowDataURLImage       bool               `json:"allow_data_url_image"`
+		ResultScoreCategory     string             `json:"result_score_category"`
+		ResultBlockThreshold    float64            `json:"result_block_threshold"`
+		KeywordSets             []KeywordSet       `json:"keyword_sets"`
+		LabelMappings           []LabelMapping     `json:"provider_label_mapping"`
+		SegmentAudit            SegmentAuditConfig `json:"segment_audit"`
 	}{
-		AlgorithmVersion:        "decision-policy-v4",
+		AlgorithmVersion:        "decision-policy-v5",
 		ProviderType:            strings.ToLower(strings.TrimSpace(cfg.Provider.Type)),
 		ProviderEndpoint:        strings.TrimSpace(cfg.Provider.Endpoint),
 		ProviderModel:           strings.TrimSpace(cfg.Provider.Model),
@@ -273,6 +287,7 @@ func policyFingerprint(cfg Config) string {
 		ResultBlockThreshold:    cfg.ResultBlockThreshold,
 		KeywordSets:             cfg.KeywordSets,
 		LabelMappings:           cfg.LabelMappings,
+		SegmentAudit:            cfg.SegmentAudit,
 	}
 	return stableJSONHash(policy)
 }

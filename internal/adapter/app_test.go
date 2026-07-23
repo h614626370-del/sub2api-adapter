@@ -145,11 +145,12 @@ func TestProviderBlockMapsToIllicitScore(t *testing.T) {
 
 func TestEventPersistencePolicy(t *testing.T) {
 	tests := map[string]bool{
-		"block":             true,
-		"fail_open":         true,
-		"provider_disabled": true,
-		"allow":             false,
-		"force_allow":       false,
+		"block":              true,
+		"fail_open":          true,
+		"provider_recovered": true,
+		"provider_disabled":  true,
+		"allow":              false,
+		"force_allow":        false,
 	}
 	for action, want := range tests {
 		if got := shouldPersistEvent(action); got != want {

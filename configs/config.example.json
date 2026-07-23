@@ -27,6 +27,16 @@
     "allow_ttl_seconds": 3600,
     "block_ttl_seconds": 86400
   },
+  "segment_audit": {
+    "enabled": true,
+    "threshold_chars": 4000,
+    "target_chars": 1800,
+    "overlap_chars": 200,
+    "max_segments": 8,
+    "concurrency": 3,
+    "review_score": 0.5,
+    "review_max_chars": 6000
+  },
   "image_provider_enabled": true,
   "image_provider": {
     "type": "chat_json",

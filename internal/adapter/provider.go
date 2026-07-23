@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -25,6 +26,57 @@ type providerRequest struct {
 	AuditText       bool         `json:"audit_text"`
 	AuditImage      bool         `json:"audit_image"`
 	NormalizedInput string       `json:"normalized_input,omitempty"`
+	AuditMode       string       `json:"audit_mode,omitempty"`
+	SegmentIndex    int          `json:"segment_index,omitempty"`
+	SegmentCount    int          `json:"segment_count,omitempty"`
+}
+
+type upstreamCallError struct {
+	Kind         string
+	HTTPStatus   int
+	UpstreamCode string
+	UpstreamID   string
+	Retryable    bool
+	Message      string
+	Cause        error
+}
+
+func (e *upstreamCallError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func (e *upstreamCallError) Unwrap() error { return e.Cause }
+
+func providerFailureFromError(err error, stage string, segmentIndex int) providerFailure {
+	failure := providerFailure{Stage: stage, SegmentIndex: segmentIndex, Kind: "internal", Message: safeSummary(err.Error(), 1200)}
+	var upstream *upstreamCallError
+	if errors.As(err, &upstream) {
+		failure.Kind = upstream.Kind
+		failure.HTTPStatus = upstream.HTTPStatus
+		failure.UpstreamCode = upstream.UpstreamCode
+		failure.UpstreamID = upstream.UpstreamID
+		failure.Retryable = upstream.Retryable
+		failure.Message = safeSummary(upstream.Message, 1200)
+		return failure
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		failure.Kind = "timeout"
+		failure.Retryable = true
+		return failure
+	}
+	if errors.Is(err, context.Canceled) {
+		failure.Kind = "canceled"
+		return failure
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		failure.Kind = "network"
+		failure.Retryable = netErr.Timeout() || netErr.Temporary()
+	}
+	return failure
 }
 
 type providerResult struct {
@@ -135,7 +187,10 @@ func (p *httpJSONProvider) Audit(ctx context.Context, in providerRequest) (provi
 	latency := time.Since(start).Milliseconds()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return providerResult{}, fmt.Errorf("HTTP JSON 上游返回状态码 %d：%s", resp.StatusCode, safeSummary(string(raw), 240))
+		return providerResult{}, &upstreamCallError{
+			Kind: "http_error", HTTPStatus: resp.StatusCode, Retryable: resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500,
+			Message: fmt.Sprintf("HTTP JSON 上游返回状态码 %d：%s", resp.StatusCode, safeSummary(string(raw), 1200)),
+		}
 	}
 	out := parseProviderResponse(raw)
 	out.LatencyMS = latency
